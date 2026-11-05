@@ -455,16 +455,39 @@ async function routeAll() {
   const todo = S.legs.filter(l => ROUTERS[l.mode] && l.km >= 0.3 && !(l.fromStart && l.km < 2))
     .map(l => ({ l, k: routeKey(l.from, l.to, l.mode) })).filter(x => !S.meta.routes[x.k]);
   let n = 0, changed = false;
+  LOAD.route = { n: 0, total: todo.length, cur: '' }; LOAD.dismissed = false; loadUpdate();
   for (const { l, k } of todo) {
     routeStatus(`Ritar vägar ${++n}/${todo.length}…`);
+    LOAD.route.cur = `${MODE[l.mode].icon} ${legName(l.from)} → ${legName(l.to)}`; loadUpdate();
     const r = await fetchRoute(l.from, l.to, l.mode);
+    LOAD.route.n = n; loadUpdate();
     if (r) { S.meta.routes[k] = r; changed = true; routeMem.delete(k); }
     if (n % 5 === 0 || n === todo.length) { analyze(); renderMap(true); }
     await sleep(window.__rtotDelay ?? 1100);
   }
   routeStatus('');
-  routing = false;
+  routing = false; LOAD.route = { n: 0, total: 0, cur: '' }; loadUpdate();
   if (changed) { analyze(); render(true); saveMeta(); }
+}
+// stor räknare mitt på skärmen medan vägar och ortnamn hämtas första gången
+const LOAD = { route: { n: 0, total: 0, cur: '' }, geo: { n: 0, total: 0 }, dismissed: false };
+const legName = p => p.key ? stopName(p) : p === S.endPt ? 'Slut' : 'Start';
+function loadUpdate() {
+  const r = LOAD.route, g = LOAD.geo;
+  const rLeft = Math.max(0, r.total - r.n), gLeft = Math.max(0, g.total - g.n);
+  const busy = rLeft > 0 || gLeft > 0;
+  const show = busy && !LOAD.dismissed && (r.total >= 3 || g.total >= 3);
+  $('#loadOverlay').classList.toggle('on', show);
+  if (!show) return;
+  const main = r.total ? r : g;
+  $('#loadTitle').textContent = r.total && rLeft ? 'Ritar upp vägarna' : 'Hämtar ortnamn';
+  $('#loadCount').innerHTML = `${main.n}<span> / ${main.total}</span>`;
+  $('#loadUnit').textContent = r.total ? (r.total === 1 ? 'sträcka' : 'sträckor') : 'platser';
+  $('#loadBar').style.width = `${(main.total ? main.n / main.total : 0) * 100}%`;
+  $('#loadCur').textContent = r.total && rLeft ? r.cur : '';
+  $('#loadGeo').textContent = r.total && g.total ? `Ortnamn ${g.n} / ${g.total}` : '';
+  const secs = Math.ceil(Math.max(rLeft, gLeft) * 1.25);
+  $('#loadEta').textContent = secs > 60 ? `ca ${Math.round(secs / 60)} min kvar` : `ca ${Math.max(1, secs)} s kvar`;
 }
 function routeStatus(t) { const el = $('#routeStatus'); if (el) el.textContent = t; }
 
@@ -488,16 +511,19 @@ async function geocodeAll() {
   const todo = S.stops.filter(s => !S.meta.places[s.key]);
   const st = S.meta.start;
   let changed = false;
+  LOAD.geo = { n: 0, total: todo.length }; loadUpdate();
   for (const s of todo) {
-    if (S.meta.places[s.key]) continue;
-    try { S.meta.places[s.key] = await reverseGeocode(s.lat, s.lon); changed = true; updateStopNames(); }
-    catch (e) { console.warn('geocode', e); await sleep(1500); }
-    await sleep(window.__rtotDelay ?? 1100);
+    if (!S.meta.places[s.key]) {
+      try { S.meta.places[s.key] = await reverseGeocode(s.lat, s.lon); changed = true; updateStopNames(); }
+      catch (e) { console.warn('geocode', e); await sleep(1500); }
+      await sleep(window.__rtotDelay ?? 1100);
+    }
+    LOAD.geo.n++; loadUpdate();
   }
   if (st && st.lat != null && !st.label) {
     try { const g = await reverseGeocode(st.lat, st.lon); st.label = g.town + (g.country ? ', ' + g.country : ''); changed = true; } catch (e) { }
   }
-  geocoding = false;
+  geocoding = false; LOAD.geo = { n: 0, total: 0 }; loadUpdate();
   if (changed) { saveMeta(); renderSide(); }
 }
 function updateStopNames() {
@@ -889,6 +915,7 @@ async function pickSearch() {
 }
 $('#pickSearch').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); pickSearch(); } });
 $('#pickCancel').onclick = stopPick;
+$('#loadSkip').onclick = () => { LOAD.dismissed = true; loadUpdate(); };
 
 /* ---------- setup dialog: namn, anledning, start- och slutpunkt ---------- */
 let startMap = null, startMarker = null, endMarker = null, pendingStart = null, pendingEnd = null, setTarget = 'start';

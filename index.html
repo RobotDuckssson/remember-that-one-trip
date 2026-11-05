@@ -753,6 +753,19 @@ select.legmode.forced{font-weight:600}
 .leaflet-control-layers label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:500;font-size:13px}
 .leaflet-control-layers input{width:auto;margin:0}
 .leaflet-control-layers-expanded{padding:8px 12px;border-radius:12px}
+/* Laddningsöverlägg */
+#loadOverlay{position:fixed;inset:0;z-index:1800;background:rgba(246,241,231,.72);backdrop-filter:blur(3px);display:none;place-items:center;padding:20px}
+#loadOverlay.on{display:grid}
+.loadcard{background:var(--card);border-radius:22px;box-shadow:0 20px 60px rgba(0,0,0,.18);padding:30px 38px 24px;width:min(440px,100%);text-align:center}
+.loadtitle{font-size:22px;margin-top:14px}
+.loadcount{font-size:64px;font-weight:700;line-height:1.05;margin-top:8px;font-variant-numeric:tabular-nums}
+.loadcount span{font-size:30px;color:var(--muted);font-weight:600}
+.bar.big{height:10px;margin:16px 0 12px}
+.loadcur{font-weight:600;min-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.loadeta{margin-top:8px;font-weight:600;color:var(--accent)}
+.loadcard p{margin:14px 0 14px;line-height:1.45}
+.spin{width:38px;height:38px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--accent);margin:0 auto;animation:spin 0.9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 /* Lägg till punkt */
 #pickBanner{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1000;background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:12px 16px;box-shadow:0 8px 30px rgba(0,0,0,.2);width:min(520px,90%);display:none}
 #pickBanner.on{display:block}
@@ -875,6 +888,21 @@ button.mini{padding:4px 12px;font-size:12px}
     </div>
   </div>
 </section>
+
+<div id="loadOverlay">
+  <div class="loadcard">
+    <div class="spin"></div>
+    <div class="loadtitle serif" id="loadTitle">Ritar upp vägarna</div>
+    <div class="loadcount serif" id="loadCount">0<span> / 0</span></div>
+    <div class="muted" id="loadUnit">sträckor</div>
+    <div class="bar big"><i id="loadBar"></i></div>
+    <div class="loadcur" id="loadCur"></div>
+    <div class="muted small" id="loadGeo"></div>
+    <div class="loadeta" id="loadEta"></div>
+    <p class="muted small">Första gången hämtas varje sträcka för sig från gratistjänster på nätet. De sparas sedan i resmappen, så nästa gång går det direkt.</p>
+    <button class="ghost" id="loadSkip">Fortsätt ändå</button>
+  </div>
+</div>
 
 <div class="modal" id="setup">
   <div class="card">
@@ -1412,16 +1440,39 @@ async function routeAll() {
   const todo = S.legs.filter(l => ROUTERS[l.mode] && l.km >= 0.3 && !(l.fromStart && l.km < 2))
     .map(l => ({ l, k: routeKey(l.from, l.to, l.mode) })).filter(x => !S.meta.routes[x.k]);
   let n = 0, changed = false;
+  LOAD.route = { n: 0, total: todo.length, cur: '' }; LOAD.dismissed = false; loadUpdate();
   for (const { l, k } of todo) {
     routeStatus(`Ritar vägar ${++n}/${todo.length}…`);
+    LOAD.route.cur = `${MODE[l.mode].icon} ${legName(l.from)} → ${legName(l.to)}`; loadUpdate();
     const r = await fetchRoute(l.from, l.to, l.mode);
+    LOAD.route.n = n; loadUpdate();
     if (r) { S.meta.routes[k] = r; changed = true; routeMem.delete(k); }
     if (n % 5 === 0 || n === todo.length) { analyze(); renderMap(true); }
     await sleep(window.__rtotDelay ?? 1100);
   }
   routeStatus('');
-  routing = false;
+  routing = false; LOAD.route = { n: 0, total: 0, cur: '' }; loadUpdate();
   if (changed) { analyze(); render(true); saveMeta(); }
+}
+// stor räknare mitt på skärmen medan vägar och ortnamn hämtas första gången
+const LOAD = { route: { n: 0, total: 0, cur: '' }, geo: { n: 0, total: 0 }, dismissed: false };
+const legName = p => p.key ? stopName(p) : p === S.endPt ? 'Slut' : 'Start';
+function loadUpdate() {
+  const r = LOAD.route, g = LOAD.geo;
+  const rLeft = Math.max(0, r.total - r.n), gLeft = Math.max(0, g.total - g.n);
+  const busy = rLeft > 0 || gLeft > 0;
+  const show = busy && !LOAD.dismissed && (r.total >= 3 || g.total >= 3);
+  $('#loadOverlay').classList.toggle('on', show);
+  if (!show) return;
+  const main = r.total ? r : g;
+  $('#loadTitle').textContent = r.total && rLeft ? 'Ritar upp vägarna' : 'Hämtar ortnamn';
+  $('#loadCount').innerHTML = `${main.n}<span> / ${main.total}</span>`;
+  $('#loadUnit').textContent = r.total ? (r.total === 1 ? 'sträcka' : 'sträckor') : 'platser';
+  $('#loadBar').style.width = `${(main.total ? main.n / main.total : 0) * 100}%`;
+  $('#loadCur').textContent = r.total && rLeft ? r.cur : '';
+  $('#loadGeo').textContent = r.total && g.total ? `Ortnamn ${g.n} / ${g.total}` : '';
+  const secs = Math.ceil(Math.max(rLeft, gLeft) * 1.25);
+  $('#loadEta').textContent = secs > 60 ? `ca ${Math.round(secs / 60)} min kvar` : `ca ${Math.max(1, secs)} s kvar`;
 }
 function routeStatus(t) { const el = $('#routeStatus'); if (el) el.textContent = t; }
 
@@ -1445,16 +1496,19 @@ async function geocodeAll() {
   const todo = S.stops.filter(s => !S.meta.places[s.key]);
   const st = S.meta.start;
   let changed = false;
+  LOAD.geo = { n: 0, total: todo.length }; loadUpdate();
   for (const s of todo) {
-    if (S.meta.places[s.key]) continue;
-    try { S.meta.places[s.key] = await reverseGeocode(s.lat, s.lon); changed = true; updateStopNames(); }
-    catch (e) { console.warn('geocode', e); await sleep(1500); }
-    await sleep(window.__rtotDelay ?? 1100);
+    if (!S.meta.places[s.key]) {
+      try { S.meta.places[s.key] = await reverseGeocode(s.lat, s.lon); changed = true; updateStopNames(); }
+      catch (e) { console.warn('geocode', e); await sleep(1500); }
+      await sleep(window.__rtotDelay ?? 1100);
+    }
+    LOAD.geo.n++; loadUpdate();
   }
   if (st && st.lat != null && !st.label) {
     try { const g = await reverseGeocode(st.lat, st.lon); st.label = g.town + (g.country ? ', ' + g.country : ''); changed = true; } catch (e) { }
   }
-  geocoding = false;
+  geocoding = false; LOAD.geo = { n: 0, total: 0 }; loadUpdate();
   if (changed) { saveMeta(); renderSide(); }
 }
 function updateStopNames() {
@@ -1846,6 +1900,7 @@ async function pickSearch() {
 }
 $('#pickSearch').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); pickSearch(); } });
 $('#pickCancel').onclick = stopPick;
+$('#loadSkip').onclick = () => { LOAD.dismissed = true; loadUpdate(); };
 
 /* ---------- setup dialog: namn, anledning, start- och slutpunkt ---------- */
 let startMap = null, startMarker = null, endMarker = null, pendingStart = null, pendingEnd = null, setTarget = 'start';
