@@ -16,7 +16,7 @@ Point the app at a folder of photos from a trip. It reads where and when each ph
 - **Start and end point** – e.g. your home, so the trip there and back is included.
 - **Trip summary** – total distance along the route, distance per mode of transport, the farthest point from home, days, stops.
 - **Map styles** – classic, silver, retro, National Geographic, pastel, terrain, ocean, black & white, dark, night, aubergine and satellite.
-- **Travel film** – choose which photos and clips appear at each stop, pick a length and pace, and record a 720p film (MP4 or WebM) with generated travel music or your own audio file. The film is saved straight into the trip folder.
+- **Travel film** – choose which photos and clips appear at each stop, pick a length and pace, and create a 720p MP4 film (H.264, 30 fps) with generated travel music or your own audio file. The film is rendered frame by frame – usually faster than real time, and it keeps going even if the window is hidden. It is saved straight into the trip folder.
 - **Remembers everything** – name, reason for the trip, start/end point, transport modes, waypoints, routes and your film selection are stored in a small JSON file in the trip folder.
 
 ## Use it
@@ -30,13 +30,13 @@ Then:
 1. Click **Välj resmapp…** (*Choose trip folder*) and select a folder with photos from one trip.
 2. The first time, give the trip a name, write a line about why you went, and set a start point (and optionally an end point).
 3. Explore the map and timeline. Change transport modes, add waypoints, pick a map style.
-4. Click **▶ Skapa film** (*Create film*), choose photos and clips per stop, choose music, and record. Keep the tab visible while it records.
+4. Click **▶ Skapa film** (*Create film*), choose photos and clips per stop, choose music, and click **● Skapa filmen**. You can keep using the computer while it renders.
 
 ### Requirements
 
 | | |
 |---|---|
-| **Browser** | Chrome or Edge on a desktop/laptop. They can read *and write* to a folder (File System Access API). Firefox and Safari can read the photos, but cannot save the trip file or the film into the folder (the film can still be downloaded). |
+| **Browser** | Chrome or Edge on a desktop/laptop. They can read *and write* to a folder (File System Access API) and encode video (WebCodecs). Firefox and Safari can read the photos, but cannot save the trip file or the film into the folder (the film can still be downloaded); without WebCodecs the film is recorded in real time instead, and the window must stay visible. |
 | **Photos** | Taken with location turned on (default on most phones). |
 | **Internet** | For map tiles, place names and routes. Your photos are never uploaded. |
 | **Videos** | Most phones record HEVC (H.265). Chrome/Edge play it if the computer supports HEVC; otherwise clips are marked as unplayable and skipped. |
@@ -66,16 +66,16 @@ Map and route data © [OpenStreetMap contributors](https://www.openstreetmap.org
 
 ## How it works
 
-- **Single file, no framework.** `index.html` contains the app, [Leaflet](https://leafletjs.com/) for the interactive map and [exifr](https://github.com/MikeKovarik/exifr) for reading EXIF data.
+- **Single file, no framework.** `index.html` contains the app, [Leaflet](https://leafletjs.com/) for the interactive map, [exifr](https://github.com/MikeKovarik/exifr) for reading EXIF data and [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) for writing MP4 files.
 - **Stops:** photos sorted by time are grouped while they stay within 1.5 km of the group centre. Video location comes from the `©xyz` atom of MP4/MOV files.
 - **Transport guess:** < 1.5 km → walking; very fast over long distances (or much faster than driving would take) → flight; otherwise car. Legs through your own waypoints are guessed from the whole stretch between real stops.
-- **Film:** drawn frame by frame on a `<canvas>` (map tiles, route, animated vehicle, Ken Burns photo montage, live video clips) and recorded with `MediaRecorder` together with the audio.
-- **Music:** generated in the browser with the Web Audio API – a seeded chord progression, arpeggio, bass, drums and melody, unique per trip. No audio files, no licensing issues.
+- **Film:** drawn frame by frame on a `<canvas>` (map tiles, route, animated vehicle, Ken Burns photo montage, video clips seeked frame-accurately), encoded with the WebCodecs `VideoEncoder` (H.264) and `AudioEncoder` (AAC, or Opus where AAC is unavailable), and muxed into a regular MP4 with the metadata at the start. Browsers without WebCodecs fall back to real-time recording with `MediaRecorder`.
+- **Music:** generated with the Web Audio API (rendered offline with `OfflineAudioContext` for the film) – a seeded chord progression, arpeggio, bass, drums and melody, unique per trip. No audio files, no licensing issues.
 
 ## Development
 
 ```bash
-npm install      # fetches Leaflet and exifr (build-time only)
+npm install      # fetches Leaflet, exifr and mp4-muxer (build-time only)
 npm run build    # writes index.html
 ```
 
@@ -108,4 +108,4 @@ Issues and pull requests are welcome. Ideas:
 
 ## License
 
-[MIT](LICENSE). Bundled third-party code (Leaflet, exifr) keeps its own licence – see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). Bundled third-party code (Leaflet, exifr, mp4-muxer) keeps its own licence – see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

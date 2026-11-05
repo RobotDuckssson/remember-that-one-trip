@@ -336,12 +336,12 @@ class FilmMaker {
       const key = this.key(sh);
       if (!this.bmps.has(key) && this.blobs.get(key)) {
         const e = { bmp: null }; this.bmps.set(key, e);
-        createImageBitmap(this.blobs.get(key)).then(b => e.bmp = b).catch(() => { });
+        e.p = createImageBitmap(this.blobs.get(key)).then(b => e.bmp = b).catch(() => { });
       }
       if (sh.p.kind === 'video' && !this.vids.has(key)) {
         const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto';
         const e = { v, started: false };
-        fullUrl(sh.p).then(u => { v.src = u; v.currentTime = sh.start; });
+        e.ready = fullUrl(sh.p).then(u => { const w = once(v, 'loadeddata', 20000); v.src = u; return w; }).then(() => { v.currentTime = sh.start; return once(v, 'seeked', 10000); }).catch(() => { });
         this.vids.set(key, e);
       }
     }
@@ -349,6 +349,31 @@ class FilmMaker {
       const key = this.key(sh), e = this.bmps.get(key);
       if (e && e.bmp) { e.bmp.close(); this.bmps.delete(key); }
       const ve = this.vids.get(key); if (ve) { ve.v.pause(); ve.v.removeAttribute('src'); ve.v.load(); this.vids.delete(key); }
+    }
+  }
+  segAt(t) { return this.seg.find(x => t >= x.t0 && t < x.t0 + x.dur) || this.seg[this.seg.length - 1]; }
+  // Filmexport: vänta in allt som rutan vid tiden t behöver (foton, kartbitar, rätt bild i filmklippen)
+  async prepareAt(t) {
+    t = clamp(t, 0, this.total - 1e-3);
+    const s = this.segAt(t), u = clamp((t - s.t0) / s.dur, 0, 1), lt = t - s.t0;
+    if (s.i != null && s.i !== this.lastI) { this.ensureMedia(s.i); this.lastI = s.i; }
+    const waits = [];
+    if (s.i != null) for (const k of [s.i - 1, s.i]) if (this.fs[k]) for (const sh of this.fs[k].shots) { const e = this.bmps.get(this.key(sh)); if (e && e.p && !e.bmp) waits.push(e.p); }
+    for (const [z, x, y] of this.tiles.needed(this.camAt(s, u))) for (let l = 0; l < this.tiles.t.length; l++) if (!this.tiles.get(l, z, x, y)) waits.push(this.tiles.load(l, z, x, y));
+    if (waits.length) await Promise.all(waits);
+    if (s.type === 'montage') {
+      const shots = s.f.shots, tt = Math.max(0, lt - this.plan.FADE * 0.5);
+      let j = 0; while (j < shots.length - 1 && tt >= shots[j + 1].t0) j++;
+      for (let k = Math.max(0, j - 1); k <= j; k++) {
+        const sh = shots[k], local = tt - sh.t0;
+        if (sh.p.kind !== 'video' || local < 0) continue;
+        const e = this.vids.get(this.key(sh)); if (!e) continue;
+        await e.ready;
+        const target = sh.start + clamp(local, 0, sh.dur - 0.02);
+        if (Math.abs(e.v.currentTime - target) > 0.004 && e.v.readyState >= 1) {
+          const w = once(e.v, 'seeked', 10000).catch(() => { }); e.v.currentTime = target; await w;
+        }
+      }
     }
   }
   cleanup() { for (const e of this.vids.values()) { e.v.pause(); e.v.removeAttribute('src'); e.v.load(); } this.vids.clear(); for (const e of this.bmps.values()) if (e.bmp) e.bmp.close(); this.bmps.clear(); }
@@ -456,8 +481,10 @@ class FilmMaker {
     if (bg) ctx.drawImage(bg, 0, 0, FW, FH);
     if (!e) return;
     const v = e.v;
-    if (!e.started && local >= -0.05) { e.started = true; try { v.currentTime = sh.start; } catch (er) { } v.play().catch(() => { }); }
-    if (local > sh.dur + 0.4 && !v.paused) v.pause();
+    if (!this.offline) {
+      if (!e.started && local >= -0.05) { e.started = true; try { v.currentTime = sh.start; } catch (er) { } v.play().catch(() => { }); }
+      if (local > sh.dur + 0.4 && !v.paused) v.pause();
+    }
     if (v.readyState >= 2 && v.videoWidth) {
       const vw = v.videoWidth, vh = v.videoHeight, ar = vw / vh;
       let w, h;
@@ -482,7 +509,7 @@ class FilmMaker {
       else { const b = this.bmp(sh); if (b) this.drawPhoto(b, clamp(local / (sh.dur + xf), 0, 1), (f.photos.length + k) % 4); }
     }
     // starta nästa klipp i tid (förladdning)
-    const nx = shots[j + 1]; if (nx && nx.p.kind === 'video' && tt > nx.t0 - 0.3) { const e = this.vids.get(this.key(nx)); if (e && !e.started) { e.started = true; e.v.play().catch(() => { }); } }
+    const nx = shots[j + 1]; if (!this.offline && nx && nx.p.kind === 'video' && tt > nx.t0 - 0.3) { const e = this.vids.get(this.key(nx)); if (e && !e.started) { e.started = true; e.v.play().catch(() => { }); } }
     ctx.globalAlpha = 1;
     const ca = clamp((lt - 0.25) / 0.5, 0, 1);
     const g = ctx.createLinearGradient(0, FH - 260, 0, FH); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.72)');
@@ -584,6 +611,84 @@ async function composeVideoPoster(p, start) {
   } catch (e) { p.unplayable = true; return null; }
 }
 
+/* ---------- export: bild för bild till MP4 (WebCodecs + mp4-muxer) ----------
+   Oberoende av om fönstret syns, och ger en vanlig MP4 med fast bildfrekvens. */
+const FPS = 30;
+const yieldTask = (() => { const ch = new MessageChannel(), q = []; ch.port1.onmessage = () => q.shift()(); return () => new Promise(r => { q.push(r); ch.port2.postMessage(0); }); })();
+async function pickVideoConfig() {
+  if (!window.VideoEncoder || !window.VideoFrame) return null;
+  for (const codec of ['avc1.640028', 'avc1.4d0028', 'avc1.42e028', 'avc1.42001f']) {
+    const cfg = { codec, width: FW, height: FH, bitrate: 6_000_000, framerate: FPS, avc: { format: 'avc' } };
+    try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return cfg; } catch (e) { }
+  }
+  return null;
+}
+async function pickAudioConfig() {
+  if (!window.AudioEncoder || !window.AudioData) return null;
+  for (const [codec, mux] of [['mp4a.40.2', 'aac'], ['opus', 'opus']]) {
+    const cfg = { codec, sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 };
+    try { const r = await AudioEncoder.isConfigSupported(cfg); if (r.supported) return { cfg, mux }; } catch (e) { }
+  }
+  return null;
+}
+async function renderMusic(total, music) {
+  if (music === 'none') return null;
+  const sr = 48000, oc = new OfflineAudioContext(2, Math.ceil(sr * (total + 0.2)), sr);
+  if (music === 'own' && FILM.ownMusic) {
+    const buf = await oc.decodeAudioData(await FILM.ownMusic.arrayBuffer());
+    const src = oc.createBufferSource(), g = oc.createGain();
+    src.buffer = buf; src.loop = buf.duration < total; src.connect(g); g.connect(oc.destination);
+    g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(1, 1);
+    g.gain.setValueAtTime(1, Math.max(1.1, total - 3.5)); g.gain.linearRampToValueAtTime(0, total);
+    src.start(0);
+  } else {
+    new TravelMusic(oc, oc.destination, { style: music === 'own' ? 'roadtrip' : music, seed: S.meta.name + S.folderName, duration: total }).startOffline(0);
+  }
+  return await oc.startRendering();
+}
+async function exportFilm(mk, total, music, vcfg, acfg, onProgress) {
+  const audio = acfg ? await renderMusic(total, music) : null;
+  const muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: { codec: 'avc', width: FW, height: FH, frameRate: FPS },
+    audio: audio ? { codec: acfg.mux, numberOfChannels: 2, sampleRate: 48000 } : undefined,
+    fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+  });
+  let encErr = null;
+  const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => encErr = e });
+  venc.configure(vcfg);
+  mk.offline = true;
+  const N = Math.ceil(total * FPS), cv = mk.cv;
+  for (let i = 0; i < N; i++) {
+    if (FILM.cancel) throw new Error('Avbruten');
+    if (encErr) throw encErr;
+    const t = i / FPS;
+    await mk.prepareAt(t);
+    mk.frame(t);
+    const vf = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+    venc.encode(vf, { keyFrame: i % (FPS * 2) === 0 }); vf.close();
+    while (venc.encodeQueueSize > 6) await new Promise(r => venc.addEventListener('dequeue', r, { once: true }));
+    if (i % 6 === 0) { onProgress(i / N, i, N); await yieldTask(); }
+  }
+  await venc.flush(); venc.close();
+  if (audio) {
+    const aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => encErr = e });
+    aenc.configure(acfg.cfg);
+    const sr = audio.sampleRate, len = Math.min(audio.length, Math.ceil(total * sr)), ch0 = audio.getChannelData(0), ch1 = audio.getChannelData(1), step = 4800;
+    for (let off = 0; off < len; off += step) {
+      const n = Math.min(step, len - off), data = new Float32Array(n * 2);
+      data.set(ch0.subarray(off, off + n), 0); data.set(ch1.subarray(off, off + n), n);
+      const ad = new AudioData({ format: 'f32-planar', sampleRate: sr, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(off / sr * 1e6), data });
+      aenc.encode(ad); ad.close();
+      if (aenc.encodeQueueSize > 20) await new Promise(r => aenc.addEventListener('dequeue', r, { once: true }));
+    }
+    await aenc.flush(); aenc.close();
+    if (encErr) throw encErr;
+  }
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+}
+
 /* ---------- filmdialog: steg 1 urval, steg 2 musik & inspelning ---------- */
 const FILM = { blob: null, ext: 'webm', running: false, ownMusic: null, stopFn: null };
 function filmStatus(msg, frac) { $('#filmStatus').textContent = msg; if (frac != null) $('#filmBar').style.width = `${(frac * 100).toFixed(1)}%`; }
@@ -674,7 +779,7 @@ $('#musicFile').onchange = e => {
   if (FILM.ownMusic) { const o = $('#filmMusic').querySelector('option[value=own]'); o.textContent = `Musik: ${FILM.ownMusic.name}`; }
   else $('#filmMusic').value = 'roadtrip';
 };
-$('#filmClose').onclick = () => { if (FILM.stopFn) FILM.stopFn(true); $('#film').classList.remove('on'); $('#filmVideo').pause(); };
+$('#filmClose').onclick = () => { FILM.cancel = true; if (FILM.stopFn) FILM.stopFn(true); $('#film').classList.remove('on'); $('#filmVideo').pause(); };
 $('#filmAgain').onclick = openFilm;
 $('#filmReplay').onclick = () => { const v = $('#filmVideo'); v.currentTime = 0; v.play(); };
 $('#filmDownload').onclick = () => {
@@ -689,10 +794,15 @@ $('#filmSave').onclick = async () => {
 };
 const filmFileName = () => `${(S.meta.name || 'resa').toLowerCase().replace(/[^a-z0-9åäöéü]+/gi, '-').replace(/^-|-$/g, '')}-film.${FILM.ext}`;
 
+function filmFinished(total, bad) {
+  const v = $('#filmVideo'); v.src = URL.createObjectURL(FILM.blob);
+  $('#filmCanvas').style.display = 'none'; v.style.display = '';
+  $('#filmDone').style.display = ''; $('#filmSave').style.display = S.canWrite ? '' : 'none';
+  filmStatus(`Klar! ${fmtMMSS(total)}, ${(FILM.blob.size / 1e6).toFixed(1)} MB (${FILM.ext}).${bad ? ` ${bad} bild/klipp kunde inte läsas och hoppades över.` : ''}`, 1);
+}
 $('#filmGo').onclick = async () => {
   if (FILM.running) return;
-  FILM.running = true;
-  const ac = new (window.AudioContext || window.webkitAudioContext)(); ac.resume();
+  FILM.running = true; FILM.cancel = false;
   $('#filmSetup').style.display = 'none';
   const mk = new FilmMaker($('#filmCanvas')); FILM.preview = null;
   const music = $('#filmMusic').value;
@@ -705,58 +815,77 @@ $('#filmGo').onclick = async () => {
     filmStatus('Hämtar kartbilder…', 0);
     const tr = await mk.prefetchTiles(f => filmStatus('Hämtar kartbilder…', f));
     if (tr.ok < tr.total * 0.5) filmStatus('Kartbilderna gick inte att hämta (offline?) – filmen görs ändå.');
-    mk.ensureMedia(0);
-    await sleep(400);
-    const out = ac.createGain(); out.connect(ac.destination);
-    const msd = ac.createMediaStreamDestination(); out.connect(msd);
-    let synth = null, src = null;
-    const t0 = ac.currentTime + 0.6;
-    if (music === 'own' && FILM.ownMusic) {
-      filmStatus('Läser in musiken…');
-      const buf = await ac.decodeAudioData(await FILM.ownMusic.arrayBuffer());
-      src = ac.createBufferSource(); src.buffer = buf; src.loop = buf.duration < total;
-      const g = ac.createGain(); src.connect(g); g.connect(out);
-      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(1, t0 + 1);
-      g.gain.setValueAtTime(1, t0 + total - 3.5); g.gain.linearRampToValueAtTime(0, t0 + total);
-    } else if (music !== 'none') {
-      synth = new TravelMusic(ac, out, { style: music === 'own' ? 'roadtrip' : music, seed: S.meta.name + S.folderName, duration: total });
+    const vcfg = await pickVideoConfig(), acfg = await pickAudioConfig();
+    if (vcfg && window.Mp4Muxer) {
+      // bild för bild – fungerar även om fönstret är dolt
+      if (music !== 'none') filmStatus('Skapar musiken…', 0);
+      const t0 = performance.now();
+      FILM.blob = await exportFilm(mk, total, music, vcfg, acfg, (f, i, n) => {
+        const el = (performance.now() - t0) / 1000, left = f > 0.02 ? el / f - el : null;
+        filmStatus(`Skapar filmen… ${Math.round(f * 100)} %  (bild ${i} av ${n}${left != null ? `, ca ${left > 90 ? Math.round(left / 60) + ' min' : Math.round(left) + ' s'} kvar` : ''}) – du kan använda datorn under tiden`, f);
+      });
+      FILM.ext = 'mp4'; mk.cleanup();
+      filmFinished(total, bad);
+      return;
     }
-    const vs = $('#filmCanvas').captureStream(30);
-    const stream = new MediaStream([...vs.getVideoTracks(), ...msd.stream.getAudioTracks()]);
-    const mime = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-      .find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
-    FILM.ext = mime && mime.startsWith('video/mp4') ? 'mp4' : 'webm';
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6, audioBitsPerSecond: 192e3 });
-    const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-    const stopped = new Promise(r => rec.onstop = r);
-    mk.frame(0);
-    await sleep(100);
-    rec.start(1000);
-    if (synth) synth.start(t0); if (src) src.start(t0);
-    let cancelled = false, raf;
-    await new Promise(resolve => {
-      FILM.stopFn = (c) => { cancelled = !!c; cancelAnimationFrame(raf); resolve(); };
-      const loop = () => {
-        const t = ac.currentTime - t0;
-        if (t >= total + 0.2) { resolve(); return; }
-        mk.frame(Math.max(0, t));
-        $('#filmBar').style.width = `${clamp(t / total, 0, 1) * 100}%`;
-        $('#filmStatus').textContent = `Spelar in… ${Math.max(0, Math.floor(t))} / ${Math.round(total)} s  (låt fliken vara öppen)`;
-        raf = requestAnimationFrame(loop);
-      };
-      loop();
-    });
-    FILM.stopFn = null;
-    rec.stop(); await stopped;
-    if (synth) synth.stop(); if (src) try { src.stop(); } catch (e) { }
-    ac.close(); mk.cleanup();
-    if (cancelled) return;
-    FILM.blob = new Blob(chunks, { type: mime || 'video/webm' });
-    const v = $('#filmVideo'); v.src = URL.createObjectURL(FILM.blob);
-    $('#filmCanvas').style.display = 'none'; v.style.display = '';
-    $('#filmDone').style.display = ''; $('#filmSave').style.display = S.canWrite ? '' : 'none';
-    filmStatus(`Klar! ${fmtMMSS(total)}, ${(FILM.blob.size / 1e6).toFixed(1)} MB (${FILM.ext}).${bad ? ` ${bad} bild/klipp kunde inte läsas och hoppades över.` : ''}`, 1);
+    // reserv: realtidsinspelning (äldre webbläsare)
+    await recordRealtime(mk, total, music, bad);
   } catch (e) {
-    console.error(e); filmStatus(`Något gick fel: ${e.message}`); $('#filmSetup').style.display = '';
+    console.error(e);
+    if (FILM.cancel) filmStatus('Avbruten.'); else filmStatus(`Något gick fel: ${e.message}`);
+    $('#filmSetup').style.display = ''; mk.cleanup();
   } finally { FILM.running = false; }
 };
+async function recordRealtime(mk, total, music, bad) {
+  const ac = new (window.AudioContext || window.webkitAudioContext)(); await ac.resume();
+  mk.ensureMedia(0);
+  await sleep(400);
+  const out = ac.createGain(); out.connect(ac.destination);
+  const msd = ac.createMediaStreamDestination(); out.connect(msd);
+  let synth = null, src = null;
+  const t0 = ac.currentTime + 0.6;
+  if (music === 'own' && FILM.ownMusic) {
+    const buf = await ac.decodeAudioData(await FILM.ownMusic.arrayBuffer());
+    src = ac.createBufferSource(); src.buffer = buf; src.loop = buf.duration < total;
+    const g = ac.createGain(); src.connect(g); g.connect(out);
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(1, t0 + 1);
+    g.gain.setValueAtTime(1, t0 + total - 3.5); g.gain.linearRampToValueAtTime(0, t0 + total);
+  } else if (music !== 'none') {
+    synth = new TravelMusic(ac, out, { style: music === 'own' ? 'roadtrip' : music, seed: S.meta.name + S.folderName, duration: total });
+  }
+  const vs = $('#filmCanvas').captureStream(30);
+  const stream = new MediaStream([...vs.getVideoTracks(), ...msd.stream.getAudioTracks()]);
+  const mime = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+    .find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+  FILM.ext = mime && mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6, audioBitsPerSecond: 192e3 });
+  const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  const stopped = new Promise(r => rec.onstop = r);
+  mk.frame(0);
+  await sleep(100);
+  rec.start(1000);
+  if (synth) synth.start(t0); if (src) src.start(t0);
+  let cancelled = false, raf, watchdog;
+  await new Promise(resolve => {
+    const done = c => { cancelled = !!c; cancelAnimationFrame(raf); clearInterval(watchdog); resolve(); };
+    FILM.stopFn = done;
+    // vakt: avsluta även om fönstret döljs och ritandet stannar
+    watchdog = setInterval(() => { if (ac.currentTime - t0 >= total + 0.2) done(false); }, 500);
+    const loop = () => {
+      const t = ac.currentTime - t0;
+      if (t >= total + 0.2) { done(false); return; }
+      mk.frame(Math.max(0, t));
+      $('#filmBar').style.width = `${clamp(t / total, 0, 1) * 100}%`;
+      $('#filmStatus').textContent = `Spelar in… ${Math.max(0, Math.floor(t))} / ${Math.round(total)} s  (håll fönstret synligt – din webbläsare saknar stöd för snabbexport)`;
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
+  });
+  FILM.stopFn = null;
+  rec.stop(); await stopped;
+  if (synth) synth.stop(); if (src) try { src.stop(); } catch (e) { }
+  ac.close(); mk.cleanup();
+  if (cancelled) return;
+  FILM.blob = new Blob(chunks, { type: mime || 'video/webm' });
+  filmFinished(total, bad);
+}

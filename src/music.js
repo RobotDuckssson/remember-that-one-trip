@@ -59,6 +59,13 @@ class TravelMusic {
     this.nextBar = 0;
     this.timer = setInterval(() => this.pump(), 200); this.pump();
   }
+  // för OfflineAudioContext (filmexport): schemalägg hela låten direkt
+  startOffline(t0 = 0) {
+    this.t0 = t0; const g = this.master.gain, end = t0 + this.dur;
+    g.setValueAtTime(0, t0); g.linearRampToValueAtTime(0.85, t0 + 1.2);
+    g.setValueAtTime(0.85, Math.max(t0 + 1.3, end - 3.5)); g.linearRampToValueAtTime(0, end);
+    for (let b = 0; b < this.nBars; b++) this.scheduleBar(b);
+  }
   stop() { clearInterval(this.timer); try { this.master.gain.cancelScheduledValues(0); this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1); } catch (e) { } }
   pump() {
     while (this.nextBar < this.nBars && this.t0 + this.nextBar * this.bar < this.ctx.currentTime + 2.5) { this.scheduleBar(this.nextBar); this.nextBar++; }

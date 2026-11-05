@@ -10,7 +10,8 @@
   },
   "devDependencies": {
     "exifr": "7.1.3",
-    "leaflet": "1.9.4"
+    "leaflet": "1.9.4",
+    "mp4-muxer": "5.2.2"
   },
   "engines": {
     "node": ">=18"
