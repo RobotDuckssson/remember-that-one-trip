@@ -288,7 +288,7 @@ button.mini{padding:4px 12px;font-size:12px}
     <div id="pickList"></div>
   </div>
   <div id="filmRec">
-    <canvas id="filmCanvas" width="1280" height="720"></canvas>
+    <canvas id="filmCanvas" width="1920" height="1080"></canvas>
     <video id="filmVideo" controls style="display:none;width:min(92vw,calc((100vh - 190px)*16/9));border-radius:10px"></video>
     <div class="bar"><i id="filmBar"></i></div>
     <div class="controls" id="filmSetup">
@@ -298,6 +298,11 @@ button.mini{padding:4px 12px;font-size:12px}
         <option value="calm">Musik: Lugn semester</option>
         <option value="own">Musik: Egen ljudfil…</option>
         <option value="none">Ingen musik</option>
+      </select>
+      <select id="filmRes" title="Upplösning">
+        <option value="720">720p (snabbast)</option>
+        <option value="1080">1080p Full HD</option>
+        <option value="2160">4K (skarpast, tar längre tid)</option>
       </select>
       <input type="file" id="musicFile" accept="audio/*" hidden>
       <button class="accent" id="filmGo">● Skapa filmen</button>

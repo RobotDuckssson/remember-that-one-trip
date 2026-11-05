@@ -16,7 +16,7 @@ Point the app at a folder of photos from a trip. It reads where and when each ph
 - **Start and end point** – e.g. your home, so the trip there and back is included.
 - **Trip summary** – total distance along the route, distance per mode of transport, the farthest point from home, days, stops.
 - **Map styles** – classic, silver, retro, National Geographic, pastel, terrain, ocean, black & white, dark, night, aubergine and satellite.
-- **Travel film** – choose which photos and clips appear at each stop, pick a length and pace, and create a 720p MP4 film (H.264, 30 fps) with generated travel music or your own audio file. The film is rendered frame by frame – usually faster than real time, and it keeps going even if the window is hidden. It is saved straight into the trip folder.
+- **Travel film** – choose which photos and clips appear at each stop, pick a length and pace, and create an MP4 film in 720p, 1080p (default) or 4K (H.264, 30 fps) with generated travel music or your own audio file. The film is rendered frame by frame – usually faster than real time, and it keeps going even if the window is hidden. It is saved straight into the trip folder.
 - **Remembers everything** – name, reason for the trip, start/end point, transport modes, waypoints, routes and your film selection are stored in a small JSON file in the trip folder.
 
 ## Use it

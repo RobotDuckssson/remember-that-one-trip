@@ -3,7 +3,10 @@
    Filmen: karta som följer resan + bildmontage per stopp, spelas in direkt
    från en canvas (MediaRecorder) tillsammans med musiken.
    ========================================================================= */
-const FW = 1280, FH = 720;
+const FW = 1280, FH = 720;           // logisk ritstorlek; allt ritas i dessa koordinater
+let SC = 1.5;                          // skala till utdata: 1 = 720p, 1.5 = 1080p, 3 = 4K
+const RES = { 720: 1, 1080: 1.5, 2160: 3 };
+const tileZoom = z => clamp(Math.floor(z + 0.6), 1, 18);   // välj kartbitar som ritas i ~0,66–1,3× (skarpt)
 const wx = lon => (lon + 180) / 360;
 const wy = lat => { const s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180); return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI); };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -34,8 +37,10 @@ class TileCache {
     });
     img.src = this.url(l, z, x, y); this.m.set(k, e); return e.p;
   }
+  // kartbitar som en logisk kamera behöver vid aktuell utdataskala
+  neededL(cam) { return this.needed({ ...cam, z: cam.z + Math.log2(SC) }, FW * SC, FH * SC); }
   needed(cam, W = FW, H = FH) {
-    const zi = clamp(Math.floor(cam.z), 1, 18), n = 2 ** zi, ts = 256 * 2 ** (cam.z - zi);
+    const zi = tileZoom(cam.z), n = 2 ** zi, ts = 256 * 2 ** (cam.z - zi);
     const cx = cam.x * n, cy = cam.y * n, out = [];
     for (let ty = Math.floor(cy - H / 2 / ts); ty <= Math.floor(cy + H / 2 / ts); ty++) {
       if (ty < 0 || ty >= n) continue;
@@ -44,9 +49,12 @@ class TileCache {
     return out;
   }
 }
-function drawMap(ctx, tiles, cam, W = FW, H = FH) {
+function drawMap(ctx, tiles, camL) {
+  // ritas i utdatapixlar (inte uppskalat) så att kartan blir skarp i 1080p/4K
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingQuality = 'high';
+  const W = FW * SC, H = FH * SC, cam = { ...camL, z: camL.z + Math.log2(SC) };
   ctx.fillStyle = tiles.bg || '#ebe6dc'; ctx.fillRect(0, 0, W, H);
-  const zi = clamp(Math.floor(cam.z), 1, 18), n = 2 ** zi, ts = 256 * 2 ** (cam.z - zi);
+  const zi = tileZoom(cam.z), n = 2 ** zi, ts = 256 * 2 ** (cam.z - zi);
   const cx = cam.x * n, cy = cam.y * n, need = tiles.needed(cam, W, H);
   for (let l = 0; l < tiles.t.length; l++) for (const [z, x, y, rawX] of need) {
     const dx = (rawX - cx) * ts + W / 2, dy = (y - cy) * ts + H / 2;
@@ -58,7 +66,9 @@ function drawMap(ctx, tiles, cam, W = FW, H = FH) {
       if (p) { const sub = 256 / 2 ** k; ctx.drawImage(p, (x - (px << k)) * sub, (y - (py << k)) * sub, sub, sub, dx, dy, ts + 0.6, ts + 0.6); break; }
     }
   }
+  ctx.restore();
 }
+
 function camFit(pts, pad = 120, W = FW, H = FH, zMax = 14, zMin = 2) {
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   pts.forEach(p => { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); });
@@ -129,7 +139,7 @@ const TEMPO = { fast: 1.0, normal: 1.6, slow: 2.4 };
 function filmCfg() {
   S.meta.film = S.meta.film || {};
   const f = S.meta.film;
-  f.tempo = f.tempo || 'normal'; f.clip = f.clip || 5; f.len = f.len || 120;
+  f.tempo = f.tempo || 'normal'; f.clip = f.clip || 5; f.len = f.len || 120; f.res = f.res || 1080;
   return f;
 }
 const sessionBad = new Set();              // bilder/klipp som inte gick att läsa (t.ex. HEIC/HEVC som datorn saknar stöd för)
@@ -212,7 +222,8 @@ function buildFilmStops(selPaths) {
     const prevStop = i === 0 ? start : S.stops[prevLast];
     f.from = { x: wx(prevStop.lon), y: wy(prevStop.lat) };
     if (!f.subs.length && f.km === 0 && i > 0) f.subs.push({ pts: [{ ...f.from, m: 'walk' }, { ...f.p, m: 'walk' }], mode: 'walk', km: 0, est: 0 });
-    f.mode = Object.entries(byMode).sort((a, b) => b[1] - a[1])[0][0];
+    // innehåller sträckan ett flyg styr det tempot och kameran
+    f.mode = byMode.flight > 0 ? 'flight' : Object.entries(byMode).sort((a, b) => b[1] - a[1])[0][0];
   });
   return out;
 }
@@ -221,7 +232,7 @@ function planFilm(fs) {
   const TITLE = 4.5, OUTRO = 6.5, FADE = 0.45;
   let total = TITLE + OUTRO;
   fs.forEach((f, i) => {
-    f.travel = (i === 0 && f.est < 2) || !f.subs.length ? 0 : clamp(1.1 + 0.5 * Math.log10(1 + f.est), 1.1, 3.0) + (f.mode === 'flight' ? 0.6 : 0);
+    f.travel = (i === 0 && f.est < 2) || !f.subs.length ? 0 : f.mode === 'flight' ? clamp(3.4 + 1.0 * Math.log10(1 + f.est), 4.0, 6.5) : clamp(1.1 + 0.5 * Math.log10(1 + f.est), 1.1, 3.0);
     let t = 0;
     f.shots = f.items.map(p => {
       let dur = pd, start = 0;
@@ -242,6 +253,8 @@ const fmtMMSS = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStar
 /* ---------- filmmotor ---------- */
 class FilmMaker {
   constructor(canvas) {
+    SC = RES[filmCfg().res] || 1.5;
+    canvas.width = Math.round(FW * SC); canvas.height = Math.round(FH * SC);
     this.cv = canvas; this.ctx = canvas.getContext('2d'); const bm = BASEMAPS[currentBasemap()]; this.tiles = new TileCache(bm.layers, bm.filter || ''); this.tiles.bg = bm.bg;
     this.blobs = new Map(); this.bmps = new Map(); this.vids = new Map();
   }
@@ -268,7 +281,9 @@ class FilmMaker {
       const next = fs[i + 1];
       const path = filmPath(f);
       const legCam = camFit(path.length ? [...path, f.p] : [f.from, f.p], 140, FW, FH, 13);
-      const zArr = clamp(Math.min(legCam.z + 1.4, next ? camFit([f.p, next.p], 150, FW, FH, 13).z + 1.4 : 99), 4, 13.5);
+      const zIn = f.mode === 'flight' ? 11 : legCam.z + 1.4;
+      const zOut = !next ? 99 : next.mode === 'flight' ? 11 : camFit([f.p, next.p], 150, FW, FH, 13).z + 1.4;
+      const zArr = clamp(Math.min(zIn, zOut), 4, 13.5);
       const arrCam = { x: f.p.x, y: f.p.y, z: zArr };
       if (f.travel > 0) { seg.push({ type: 'travel', t0: t, dur: f.travel, f, i, path, camA: prevCam, camMid: legCam, camB: arrCam }); t += f.travel; }
       seg.push({ type: 'montage', t0: t, dur: f.montage, f, i, cam: arrCam }); t += f.montage;
@@ -283,12 +298,12 @@ class FilmMaker {
         const ef = {
           isEnd: true, subs: legs.flatMap(subsFromLeg), inner: [], viaPts: S.stops.slice(lastIdx + 1).map(x => ({ x: wx(x.lon), y: wy(x.lat) })),
           p: this.endP, from: fs[fs.length - 1].p, start: S.stops[S.stops.length - 1].end, est,
-          mode: Object.entries(byMode).sort((a, b) => b[1] - a[1])[0][0],
+          mode: byMode.flight > 0 ? 'flight' : Object.entries(byMode).sort((a, b) => b[1] - a[1])[0][0],
           name: S.endPt.same ? (T.start.auto || !T.start.label ? 'Tillbaka till start' : `Hem till ${T.start.label}`) : (S.endPt.label || 'Slutpunkten'),
         };
         const path = filmPath(ef);
         const legCam = camFit(path, 140, FW, FH, 13);
-        const dur = clamp(1.3 + 0.5 * Math.log10(1 + est), 1.3, 3.2) + (ef.mode === 'flight' ? 0.6 : 0);
+        const dur = ef.mode === 'flight' ? clamp(3.4 + 1.0 * Math.log10(1 + est), 4.0, 6.5) : clamp(1.3 + 0.5 * Math.log10(1 + est), 1.3, 3.2);
         const arrCam = { x: ef.p.x, y: ef.p.y, z: clamp(legCam.z + 1, 4, 12) };
         seg.push({ type: 'travel', t0: t, dur, f: ef, i: fs.length, path, camA: prevCam, camMid: legCam, camB: arrCam }); t += dur;
         prevCam = arrCam;
@@ -300,9 +315,10 @@ class FilmMaker {
   }
   camAt(s, u) {
     if (s.type === 'travel') {
-      if (u < 0.25) return camLerp(s.camA, s.camMid, ease(u / 0.25));
-      if (u < 0.78) return s.camMid;
-      return camLerp(s.camMid, s.camB, ease((u - 0.78) / 0.22));
+      const [a, b] = s.f.mode === 'flight' ? [0.3, 0.7] : [0.25, 0.78];   // flyg: lugnare ut- och inzoomning
+      if (u < a) return camLerp(s.camA, s.camMid, ease(u / a));
+      if (u < b) return s.camMid;
+      return camLerp(s.camMid, s.camB, ease((u - b) / (1 - b)));
     }
     if (s.type === 'outro') return camLerp(s.camA, s.cam, ease(clamp(u / 0.35, 0, 1)));
     return s.cam;
@@ -311,7 +327,7 @@ class FilmMaker {
     const want = new Map();
     for (const s of this.seg) {
       const n = Math.max(2, Math.ceil(s.dur / 0.25));
-      for (let k = 0; k <= n; k++) for (const [z, x, y] of this.tiles.needed(this.camAt(s, k / n))) for (let l = 0; l < this.tiles.t.length; l++) want.set(`${l}/${z}/${x}/${y}`, [l, z, x, y]);
+      for (let k = 0; k <= n; k++) for (const [z, x, y] of this.tiles.neededL(this.camAt(s, k / n))) for (let l = 0; l < this.tiles.t.length; l++) want.set(`${l}/${z}/${x}/${y}`, [l, z, x, y]);
     }
     const list = [...want.values()]; let done = 0, ok = 0;
     await pool(list, 12, async ([l, z, x, y]) => { if (await this.tiles.load(l, z, x, y)) ok++; done++; if (done % 8 === 0) onProgress(done / list.length); });
@@ -359,7 +375,7 @@ class FilmMaker {
     if (s.i != null && s.i !== this.lastI) { this.ensureMedia(s.i); this.lastI = s.i; }
     const waits = [];
     if (s.i != null) for (const k of [s.i - 1, s.i]) if (this.fs[k]) for (const sh of this.fs[k].shots) { const e = this.bmps.get(this.key(sh)); if (e && e.p && !e.bmp) waits.push(e.p); }
-    for (const [z, x, y] of this.tiles.needed(this.camAt(s, u))) for (let l = 0; l < this.tiles.t.length; l++) if (!this.tiles.get(l, z, x, y)) waits.push(this.tiles.load(l, z, x, y));
+    for (const [z, x, y] of this.tiles.neededL(this.camAt(s, u))) for (let l = 0; l < this.tiles.t.length; l++) if (!this.tiles.get(l, z, x, y)) waits.push(this.tiles.load(l, z, x, y));
     if (waits.length) await Promise.all(waits);
     if (s.type === 'montage') {
       const shots = s.f.shots, tt = Math.max(0, lt - this.plan.FADE * 0.5);
@@ -387,6 +403,7 @@ class FilmMaker {
     const u = clamp((t - s.t0) / s.dur, 0, 1), lt = t - s.t0;
     if (s.i != null && s.i !== this.lastI) { this.ensureMedia(s.i); this.lastI = s.i; }
     if (s !== this.lastSeg) { if (this.lastSeg && this.lastSeg.type === 'montage') this.pauseVideos(this.lastSeg.f); this.lastSeg = s; }
+    ctx.setTransform(SC, 0, 0, SC, 0, 0); ctx.imageSmoothingQuality = 'high';
     ctx.save();
     if (s.type === 'title') this.drawTitle(u, lt, s);
     else if (s.type === 'travel') this.drawTravel(u, lt, s);
@@ -398,7 +415,7 @@ class FilmMaker {
   drawRoute(cam, uptoIdx, partial = null, alpha = 1, all = false) {
     const ctx = this.ctx;
     if (all) this.allSubs.forEach(u => strokePath(ctx, cam, u.pts, u.mode, alpha));
-    else for (let i = 0; i < uptoIdx && i < this.fs.length; i++) { const f = this.fs[i]; [...f.subs, ...f.inner].forEach(u => strokePath(ctx, cam, u.pts, u.mode, alpha)); }
+    else for (let i = 0; i < uptoIdx && i < this.fs.length; i++) { const f = this.fs[i]; [...f.subs, ...f.inner].forEach(u => { if (u.mode !== 'flight') strokePath(ctx, cam, u.pts, u.mode, alpha); }); }
     if (partial) strokeRuns(ctx, cam, partial.pts, partial.mode, alpha);
     const [hx, hy] = toScreen(cam, this.startP); dot(ctx, hx, hy, 9, '#1f2a36');
     if (this.endP && all) this.flag(cam, this.endP);
@@ -438,7 +455,7 @@ class FilmMaker {
     const ctx = this.ctx, f = s.f, cam = this.camAt(s, u);
     drawMap(ctx, this.tiles, cam);
     const pts = s.path;
-    const pu = ease(clamp((u - 0.12) / 0.7, 0, 1));
+    const pu = f.mode === 'flight' ? ease(clamp((u - 0.18) / 0.62, 0, 1)) : ease(clamp((u - 0.12) / 0.7, 0, 1));
     const part = partialPath(pts, pu);
     strokeRuns(ctx, cam, pts, f.mode, 0.22);
     this.drawRoute(cam, s.i, { pts: part, mode: f.mode });
@@ -471,7 +488,7 @@ class FilmMaker {
   }
   drawPhoto(bmp, v, dir = 0) {
     const ctx = this.ctx;
-    const z = dir % 2 ? 1.1 - 0.07 * v : 1.03 + 0.07 * v;
+    const z = dir % 2 ? 1.1 - 0.07 * v : 1.03 + 0.07 * v;   // bilden är redan 10 % större än rutan
     const dx = (dir % 3 - 1) * 18 * (v - 0.5), dy = ((dir + 1) % 3 - 1) * 10 * (v - 0.5);
     const w = FW * z, h = FH * z;
     ctx.drawImage(bmp, (FW - w) / 2 + dx, (FH - h) / 2 + dy, w, h);
@@ -524,21 +541,40 @@ class FilmMaker {
     this.drawInset(s.i, ca);
     ctx.globalAlpha = 1;
   }
+  // hörnkartan visar bara den del av resan man är i just nu (delas upp vid flygningar)
+  regionOf(i) {
+    if (!this.regions) {
+      let r = 0; this.regions = this.fs.map((f, k) => { if (k > 0 && f.subs.some(u => u.mode === 'flight')) r++; return r; });
+      this.startRegion = this.fs.length && this.fs[0].subs.some(u => u.mode === 'flight') ? -1 : 0;
+      this.insetCams = {};
+    }
+    return this.regions[i];
+  }
+  insetCam(reg, W, H) {
+    if (this.insetCams[reg]) return this.insetCams[reg];
+    const pts = [];
+    this.fs.forEach((f, k) => { if (this.regions[k] !== reg) return; pts.push(f.p); [...f.subs, ...f.inner].forEach(u => { if (u.mode !== 'flight') pts.push(...u.pts); }); });
+    if (reg === this.startRegion) pts.push(this.startP);
+    return this.insetCams[reg] = camFit(pts, 18, W, H, 12, 0);
+  }
   drawInset(i, alpha) {
     const ctx = this.ctx, W = 230, H = 150, X = FW - W - 32, Y = 28;
-    const pts = [this.startP, ...this.fs.map(f => f.p)];
-    const cam = camFit(pts, 18, W, H, 16, 0);
+    const reg = this.regionOf(i), cam = this.insetCam(reg, W, H);
     ctx.save(); ctx.globalAlpha = alpha * 0.92;
     roundRect(ctx, X, Y, W, H, 14); ctx.fillStyle = 'rgba(14,19,25,.62)'; ctx.fill(); ctx.clip();
     ctx.translate(X, Y);
     for (let k = 0; k < this.fs.length; k++) {
-      const P = filmPath(this.fs[k]); if (P.length < 2) continue;
-      ctx.beginPath(); P.forEach((p, n) => { const [x, y] = toScreen(cam, p, W, H); n ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.setLineDash(['flight', 'ferry'].includes(this.fs[k].mode) ? [5, 4] : []); ctx.lineWidth = k <= i ? 2.5 : 1.5;
-      ctx.strokeStyle = k <= i ? '#ff8a5c' : 'rgba(255,255,255,.28)'; ctx.stroke();
+      if (this.regions[k] !== reg) continue;
+      for (const u of [...this.fs[k].subs, ...this.fs[k].inner]) {
+        if (u.mode === 'flight' || u.pts.length < 2) continue;
+        ctx.beginPath(); u.pts.forEach((p, n) => { const [x, y] = toScreen(cam, p, W, H); n ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+        ctx.setLineDash(u.mode === 'ferry' ? [5, 4] : []); ctx.lineWidth = k <= i ? 2.5 : 1.5;
+        ctx.strokeStyle = k <= i ? '#ff8a5c' : 'rgba(255,255,255,.28)'; ctx.stroke();
+      }
     }
     ctx.setLineDash([]);
-    const [hx, hy] = toScreen(cam, this.startP, W, H); dot(ctx, hx, hy, 4, '#fff', '#fff', 1);
+    if (reg === this.startRegion) { const [hx, hy] = toScreen(cam, this.startP, W, H); dot(ctx, hx, hy, 4, '#fff', '#fff', 1); }
+    this.fs.forEach((f, k) => { if (this.regions[k] === reg && k !== i) { const [x, y] = toScreen(cam, f.p, W, H); dot(ctx, x, y, 2.5, k < i ? '#ff8a5c' : 'rgba(255,255,255,.5)', 'transparent', 0); } });
     const [cx, cy] = toScreen(cam, this.fs[i].p, W, H); dot(ctx, cx, cy, 6, '#e4572e', '#fff', 2);
     ctx.restore();
   }
@@ -574,25 +610,28 @@ class FilmMaker {
   }
 }
 
+const compSize = () => [Math.round(FW * SC * 1.1), Math.round(FH * SC * 1.1)];   // +10 % så att zoomeffekten inte förstorar upp
 function composeFrom(src, sw, sh) {
-  const c = new OffscreenCanvas(FW, FH), g = c.getContext('2d');
+  const [CW, CH] = compSize(), k = CW / FW;
+  const c = new OffscreenCanvas(CW, CH), g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
   const ar = sw / sh;
-  const cover = () => { const s = Math.max(FW / sw, FH / sh); g.drawImage(src, (FW - sw * s) / 2, (FH - sh * s) / 2, sw * s, sh * s); };
+  const cover = () => { const s = Math.max(CW / sw, CH / sh); g.drawImage(src, (CW - sw * s) / 2, (CH - sh * s) / 2, sw * s, sh * s); };
   if (ar >= 1.2) cover();
   else {
-    g.filter = 'blur(30px) brightness(.62) saturate(1.2)'; cover(); g.filter = 'none';
-    const s = Math.min(FW * 0.9 / sw, FH * 0.94 / sh), w = sw * s, h = sh * s;
-    g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 40;
-    g.drawImage(src, (FW - w) / 2, (FH - h) / 2, w, h);
+    g.filter = `blur(${Math.round(30 * k)}px) brightness(.62) saturate(1.2)`; cover(); g.filter = 'none';
+    const s = Math.min(CW * 0.9 / sw, CH * 0.94 / sh), w = sw * s, h = sh * s;
+    g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 40 * k;
+    g.drawImage(src, (CW - w) / 2, (CH - h) / 2, w, h);
   }
-  return c.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
+  return c.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
 }
 async function loadOriented(file) {
   const url = URL.createObjectURL(file), img = new Image();
   try { img.src = url; await img.decode(); } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
-  const s = Math.min(1, 1100 / img.naturalHeight, 1600 / img.naturalWidth);
+  // behåll full upplösning upp till vad filmen behöver (aldrig uppskalning)
+  const [CW, CH] = compSize(), s = Math.min(1, Math.max(CW / img.naturalWidth, CH / img.naturalHeight) * 1.05);
   const c = new OffscreenCanvas(Math.round(img.naturalWidth * s), Math.round(img.naturalHeight * s));
-  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height);
   return c;
 }
 async function composePhoto(p) {
@@ -617,8 +656,11 @@ const FPS = 30;
 const yieldTask = (() => { const ch = new MessageChannel(), q = []; ch.port1.onmessage = () => q.shift()(); return () => new Promise(r => { q.push(r); ch.port2.postMessage(0); }); })();
 async function pickVideoConfig() {
   if (!window.VideoEncoder || !window.VideoFrame) return null;
-  for (const codec of ['avc1.640028', 'avc1.4d0028', 'avc1.42e028', 'avc1.42001f']) {
-    const cfg = { codec, width: FW, height: FH, bitrate: 6_000_000, framerate: FPS, avc: { format: 'avc' } };
+  const W = Math.round(FW * SC), H = Math.round(FH * SC), big = SC > 1.5;
+  const codecs = big ? ['avc1.640033', 'avc1.4d0033', 'avc1.640034'] : ['avc1.640028', 'avc1.4d0028', 'avc1.42e028', 'avc1.42001f'];
+  const bitrate = SC >= 3 ? 40_000_000 : SC >= 1.5 ? 14_000_000 : 7_000_000;
+  for (const codec of codecs) {
+    const cfg = { codec, width: W, height: H, bitrate, framerate: FPS, avc: { format: 'avc' }, latencyMode: 'quality' };
     try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return cfg; } catch (e) { }
   }
   return null;
@@ -650,7 +692,7 @@ async function exportFilm(mk, total, music, vcfg, acfg, onProgress) {
   const audio = acfg ? await renderMusic(total, music) : null;
   const muxer = new Mp4Muxer.Muxer({
     target: new Mp4Muxer.ArrayBufferTarget(),
-    video: { codec: 'avc', width: FW, height: FH, frameRate: FPS },
+    video: { codec: 'avc', width: Math.round(FW * SC), height: Math.round(FH * SC), frameRate: FPS },
     audio: audio ? { codec: acfg.mux, numberOfChannels: 2, sampleRate: 48000 } : undefined,
     fastStart: 'in-memory', firstTimestampBehavior: 'offset',
   });
@@ -761,6 +803,7 @@ $('#filmClip').onchange = () => { filmCfg().clip = +$('#filmClip').value; pickCh
 $('#pickNext').onclick = () => {
   filmStep(2);
   $('#filmMusic').value = filmCfg().music && filmCfg().music !== 'own' ? filmCfg().music : (S.trip.type === 'stay' ? 'calm' : 'roadtrip');
+  $('#filmRes').value = String(filmCfg().res);
   const mk = new FilmMaker($('#filmCanvas'));
   const dur = mk.prepareTimeline();
   FILM.preview = mk;
@@ -768,8 +811,9 @@ $('#pickNext').onclick = () => {
   drawPoster(mk);
 };
 $('#filmBack').onclick = () => { filmStep(1); };
+$('#filmRes').onchange = () => { filmCfg().res = +$('#filmRes').value; saveMeta(); $('#pickNext').onclick(); };
 async function drawPoster(mk) {
-  mk.tiles.needed(mk.seg[0].cam).forEach(([z, x, y]) => mk.tiles.t.forEach((_, l) => mk.tiles.load(l, z, x, y)));
+  mk.tiles.neededL(mk.seg[0].cam).forEach(([z, x, y]) => mk.tiles.t.forEach((_, l) => mk.tiles.load(l, z, x, y)));
   for (let k = 0; k < 12 && FILM.preview === mk && !FILM.running; k++) { mk.frame(2.2); await sleep(250); }
 }
 $('#filmBtn').onclick = openFilm;
