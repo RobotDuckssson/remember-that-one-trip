@@ -59,6 +59,13 @@ class TravelMusic {
     this.nextBar = 0;
     this.timer = setInterval(() => this.pump(), 200); this.pump();
   }
+  // filmexport i bitar: schemalägg takterna som börjar i [a, b) sekunder, med tid 0 = a.
+  // Fade in/ut läggs på i efterhand på hela ljudet.
+  startWindow(a, b) {
+    this.t0 = -a; this.master.gain.setValueAtTime(0.85, 0);
+    const first = Math.max(0, Math.ceil(a / this.bar - 1e-9)), last = Math.min(this.nBars, Math.ceil(b / this.bar));
+    for (let k = first; k < last; k++) this.scheduleBar(k);
+  }
   // för OfflineAudioContext (filmexport): schemalägg hela låten direkt
   startOffline(t0 = 0) {
     this.t0 = t0; const g = this.master.gain, end = t0 + this.dur;

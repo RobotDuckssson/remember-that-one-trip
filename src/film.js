@@ -673,28 +673,79 @@ async function pickAudioConfig() {
   }
   return null;
 }
-async function renderMusic(total, music) {
+// Musiken skapas i bitar om 30 s (med 4 s förspel så att toner och eko hänger med över skarvarna).
+// Då blir det aldrig ett jättejobb, minnet räcker även för långa filmer och vi kan visa förlopp.
+async function renderMusic(total, music, onProgress = () => { }) {
   if (music === 'none') return null;
-  const sr = 48000, oc = new OfflineAudioContext(2, Math.ceil(sr * (total + 0.2)), sr);
+  const sr = 48000, len = Math.ceil(sr * total), out = [new Float32Array(len), new Float32Array(len)];
   if (music === 'own' && FILM.ownMusic) {
-    const buf = await oc.decodeAudioData(await FILM.ownMusic.arrayBuffer());
-    const src = oc.createBufferSource(), g = oc.createGain();
-    src.buffer = buf; src.loop = buf.duration < total; src.connect(g); g.connect(oc.destination);
-    g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(1, 1);
-    g.gain.setValueAtTime(1, Math.max(1.1, total - 3.5)); g.gain.linearRampToValueAtTime(0, total);
-    src.start(0);
+    onProgress(0, 0, 1);
+    const buf = await new OfflineAudioContext(2, 1, sr).decodeAudioData(await FILM.ownMusic.arrayBuffer());
+    for (let c = 0; c < 2; c++) {
+      const src = buf.getChannelData(Math.min(c, buf.numberOfChannels - 1)), n = src.length;
+      for (let o = 0; o < len; o += n) out[c].set(src.subarray(0, Math.min(n, len - o)), o);
+    }
+    onProgress(1, 1, 1);
   } else {
-    new TravelMusic(oc, oc.destination, { style: music === 'own' ? 'roadtrip' : music, seed: S.meta.name + S.folderName, duration: total }).startOffline(0);
+    const style = music === 'own' ? 'roadtrip' : music, seed = S.meta.name + S.folderName, PRE = 4;
+    const pc = new OfflineAudioContext(2, 1, sr), probe = new TravelMusic(pc, pc.destination, { style, seed, duration: total });
+    const bar = probe.bar, nBars = probe.nBars;
+    // rendera ett tidsfönster [ws, we) och lägg det på plats 'dst' i utdata
+    const renderWin = async (ws, we, dst = ws) => {
+      if (FILM.cancel) throw new Error('Avbruten');
+      const pre = Math.min(PRE, ws);
+      const oc = new OfflineAudioContext(2, Math.ceil(sr * (we - ws + pre)) + 1, sr);
+      new TravelMusic(oc, oc.destination, { style, seed, duration: total }).startWindow(ws - pre, we);
+      const r = await oc.startRendering();
+      const from = Math.round(pre * sr), at = Math.round(dst * sr), n = Math.min(len - at, Math.round((we - ws) * sr));
+      for (let c = 0; c < 2; c++) out[c].set(r.getChannelData(c).subarray(from, from + n), at);
+      return r;
+    };
+    // efter introt upprepas låten exakt var 16:e takt -> rendera början, en slinga och slutet, och kopiera slingan däremellan
+    const H = 20, C = 16, cycleEnd = H + C;
+    const copies = nBars > cycleEnd + C + 4 ? Math.floor((nBars - 4 - cycleEnd) / C) : 0;
+    const plan = [];
+    if (copies > 0) {
+      plan.push([0, H * bar]);
+      plan.push([H * bar, cycleEnd * bar, 'cycle']);
+      plan.push([(cycleEnd + copies * C) * bar, total]);
+    } else plan.push([0, total]);
+    // dela upp i bitar om högst 30 s
+    const jobs = [];
+    for (const [ws, we, tag] of plan) { if (tag) { jobs.push([ws, we, tag]); continue; } for (let t = ws; t < we - 1e-6; t += 30) jobs.push([t, Math.min(we, t + 30)]); }
+    for (let k = 0; k < jobs.length; k++) {
+      const [ws, we, tag] = jobs[k];
+      await renderWin(ws, we);
+      if (tag === 'cycle') {
+        // kopiera slingan framåt
+        const a0 = Math.round(ws * sr), n = Math.round((we - ws) * sr);
+        for (let m = 1; m <= copies; m++) {
+          const at = Math.round((ws + m * C * bar) * sr), cnt = Math.min(n, len - at);
+          if (cnt <= 0) break;
+          for (let c = 0; c < 2; c++) out[c].copyWithin(at, a0, a0 + cnt);
+        }
+      }
+      onProgress((k + 1) / jobs.length, k + 1, jobs.length);
+      await yieldTask();
+    }
   }
-  return await oc.startRendering();
+  // tona in 1,2 s och ut 3,5 s
+  const fin = Math.round(1.2 * sr), fout = Math.round(Math.min(3.5, total / 3) * sr);
+  for (let c = 0; c < 2; c++) {
+    const d = out[c];
+    for (let i = 0; i < fin && i < len; i++) d[i] *= i / fin;
+    for (let i = 0; i < fout; i++) d[len - 1 - i] *= i / fout;
+  }
+  return { sampleRate: sr, length: len, getChannelData: c => out[c] };
 }
-async function exportFilm(mk, total, music, vcfg, acfg, onProgress) {
-  const audio = acfg ? await renderMusic(total, music) : null;
+async function exportFilm(mk, total, music, vcfg, acfg, onProgress, onMusic, out) {
+  const audio = acfg ? await renderMusic(total, music, onMusic) : null;
+  // skriv direkt till filen i resmappen när det går – då behöver inte hela filmen få plats i minnet
   const muxer = new Mp4Muxer.Muxer({
-    target: new Mp4Muxer.ArrayBufferTarget(),
+    target: out ? new Mp4Muxer.FileSystemWritableFileStreamTarget(out.stream) : new Mp4Muxer.ArrayBufferTarget(),
     video: { codec: 'avc', width: Math.round(FW * SC), height: Math.round(FH * SC), frameRate: FPS },
     audio: audio ? { codec: acfg.mux, numberOfChannels: 2, sampleRate: 48000 } : undefined,
-    fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+    fastStart: out ? false : 'in-memory', firstTimestampBehavior: 'offset',
   });
   let encErr = null;
   const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => encErr = e });
@@ -728,6 +779,7 @@ async function exportFilm(mk, total, music, vcfg, acfg, onProgress) {
     if (encErr) throw encErr;
   }
   muxer.finalize();
+  if (out) { await out.stream.close(); out.closed = true; return await out.handle.getFile(); }
   return new Blob([muxer.target.buffer], { type: 'video/mp4' });
 }
 
@@ -858,12 +910,12 @@ const filmFileName = () => `${(S.meta.name || 'resa').toLowerCase().replace(/[^a
 function filmFinished(total, bad) {
   const v = $('#filmVideo'); v.src = URL.createObjectURL(FILM.blob);
   $('#filmCanvas').style.display = 'none'; v.style.display = '';
-  $('#filmDone').style.display = ''; $('#filmSave').style.display = S.canWrite ? '' : 'none';
-  filmStatus(`Klar! ${fmtMMSS(total)}, ${(FILM.blob.size / 1e6).toFixed(1)} MB (${FILM.ext}).${bad ? ` ${bad} bild/klipp kunde inte läsas och hoppades över.` : ''}`, 1);
+  $('#filmDone').style.display = ''; $('#filmSave').style.display = S.canWrite && !FILM.saved ? '' : 'none';
+  filmStatus(`Klar! ${fmtMMSS(total)}, ${(FILM.blob.size / 1e6).toFixed(1)} MB (${FILM.ext}).${FILM.saved ? ` Sparad i resmappen som ${filmFileName()}.` : ''}${bad ? ` ${bad} bild/klipp kunde inte läsas och hoppades över.` : ''}`, 1);
 }
 $('#filmGo').onclick = async () => {
   if (FILM.running) return;
-  FILM.running = true; FILM.cancel = false;
+  FILM.running = true; FILM.cancel = false; FILM.saved = false; FILM.out = null;
   $('#filmSetup').style.display = 'none';
   const mk = new FilmMaker($('#filmCanvas')); FILM.preview = null;
   const music = $('#filmMusic').value;
@@ -884,13 +936,21 @@ $('#filmGo').onclick = async () => {
     const vcfg = await pickVideoConfig(), acfg = await pickAudioConfig();
     if (vcfg && window.Mp4Muxer) {
       // bild för bild – fungerar även om fönstret är dolt
-      fpShow(2, { sub: music === 'none' ? 'Ingen musik vald' : music === 'own' ? 'Läser in din ljudfil' : 'Komponeras för just den här resan' });
-      let t0 = 0;
+      const musicSub = music === 'none' ? 'Ingen musik vald' : music === 'own' ? 'Läser in din ljudfil' : 'Komponeras för just den här resan';
+      fpShow(2, { sub: musicSub });
+      FILM.ext = 'mp4';
+      FILM.out = null;
+      if (S.canWrite && S.dir) {
+        try { const handle = await S.dir.getFileHandle(filmFileName(), { create: true }); FILM.out = { handle, stream: await handle.createWritable() }; }
+        catch (e) { console.warn('kan inte skriva direkt', e); FILM.out = null; }
+      }
+      let t0 = 0, tmus = performance.now();
       FILM.blob = await exportFilm(mk, total, music, vcfg, acfg, (f, i, n) => {
         if (!t0) t0 = performance.now();
-        fpShow(3, { big: Math.round(f * 100) + '<span>%</span>', unit: `bild ${i} av ${n}`, frac: f, eta: etaText(t0, f), sub: tileWarn + 'Du kan använda datorn under tiden.' });
-      });
+        fpShow(3, { big: Math.round(f * 100) + '<span>%</span>', unit: `bild ${i} av ${n}`, frac: f, eta: etaText(t0, f), sub: tileWarn + (FILM.out ? 'Sparas direkt i resmappen. ' : '') + 'Du kan använda datorn under tiden.' });
+      }, (f, k, n) => fpShow(2, { big: k, of: n, unit: n === 1 ? 'del' : 'delar', frac: f, sub: musicSub, eta: etaText(tmus, f) }), FILM.out);
       fpHide();
+      FILM.saved = !!FILM.out;
       FILM.ext = 'mp4'; mk.cleanup();
       filmFinished(total, bad);
       return;
@@ -901,6 +961,7 @@ $('#filmGo').onclick = async () => {
   } catch (e) {
     console.error(e);
     fpHide();
+    if (FILM.out && !FILM.out.closed) { try { await FILM.out.stream.abort(); } catch (er) { } }
     if (FILM.cancel) filmStatus('Avbruten.'); else filmStatus(`Något gick fel: ${e.message}`);
     $('#filmSetup').style.display = ''; mk.cleanup();
   } finally { FILM.running = false; }
