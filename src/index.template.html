@@ -33,6 +33,7 @@ label{display:block;font-weight:600;margin:14px 0 6px}
 #welcome .stamp{font-size:54px;margin-bottom:10px}
 #welcome button{font-size:16px;padding:12px 26px;margin-top:14px}
 #scanStatus{margin-top:18px;min-height:20px}
+.scancard{color:var(--ink);background:var(--card);border-radius:18px;box-shadow:0 10px 40px rgba(0,0,0,.1);padding:20px 28px;margin:0 auto;max-width:380px}
 .bar{height:6px;background:var(--line);border-radius:9px;overflow:hidden;margin-top:8px}
 .bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
 
@@ -91,6 +92,27 @@ select.legmode.forced{font-weight:600}
 .leaflet-control-layers label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:500;font-size:13px}
 .leaflet-control-layers input{width:auto;margin:0}
 .leaflet-control-layers-expanded{padding:8px 12px;border-radius:12px}
+/* Filmförlopp */
+.canvaswrap{position:relative}
+#filmProg{position:absolute;inset:0;display:none;place-items:center;background:rgba(14,19,25,.55);backdrop-filter:blur(2px);border-radius:10px}
+#filmProg.on{display:grid}
+.fpcard{background:rgba(22,29,38,.94);border:1px solid #2c3744;border-radius:20px;padding:22px 30px 18px;width:min(460px,90%);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+#fpSteps{list-style:none;display:flex;justify-content:center;gap:6px;padding:0;margin:0 0 14px;flex-wrap:wrap}
+#fpSteps li{font-size:12px;color:#7d8793;display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid #2c3744}
+#fpSteps li span{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;background:#2c3744;color:#cfd5db;font-size:10px;font-weight:700}
+#fpSteps li.cur{color:#fff;border-color:#e4572e}
+#fpSteps li.cur span{background:#e4572e;color:#fff}
+#fpSteps li.done{color:#9fb5a3}
+#fpSteps li.done span{background:#3c7a4f;color:#fff}
+.fptitle{font-size:20px;color:#f3efe6}
+.fpbig{font-size:58px;font-weight:700;color:#fff;line-height:1.1;margin-top:6px;min-height:64px;display:flex;align-items:baseline;justify-content:center;gap:4px;font-variant-numeric:tabular-nums}
+.fpbig .spin{align-self:center}
+#film #filmProg .bar{width:auto;margin:16px 0 12px}
+.fpbig span{font-size:26px;color:#97a0aa;font-weight:600}
+.fpunit{color:#aab2bc;font-size:13px}
+#filmProg .bar{background:#2c3744}
+.fpsub{color:#aab2bc;font-size:12.5px;min-height:16px}
+.fpeta{color:#ffb08f;font-weight:600;margin:6px 0 12px;min-height:18px}
 /* Laddningsöverlägg */
 #loadOverlay{position:fixed;inset:0;z-index:1800;background:rgba(246,241,231,.72);backdrop-filter:blur(3px);display:none;place-items:center;padding:20px}
 #loadOverlay.on{display:grid}
@@ -288,7 +310,21 @@ button.mini{padding:4px 12px;font-size:12px}
     <div id="pickList"></div>
   </div>
   <div id="filmRec">
-    <canvas id="filmCanvas" width="1920" height="1080"></canvas>
+    <div class="canvaswrap">
+      <canvas id="filmCanvas" width="1920" height="1080"></canvas>
+      <div id="filmProg">
+        <div class="fpcard">
+          <ol id="fpSteps"></ol>
+          <div class="fptitle serif" id="fpTitle"></div>
+          <div class="fpbig serif" id="fpBig"></div>
+          <div class="fpunit" id="fpUnit"></div>
+          <div class="bar big"><i id="fpBar"></i></div>
+          <div class="fpsub" id="fpSub"></div>
+          <div class="fpeta" id="fpEta"></div>
+          <button class="ghost" id="fpCancel">Avbryt</button>
+        </div>
+      </div>
+    </div>
     <video id="filmVideo" controls style="display:none;width:min(92vw,calc((100vh - 190px)*16/9));border-radius:10px"></video>
     <div class="bar"><i id="filmBar"></i></div>
     <div class="controls" id="filmSetup">

@@ -695,6 +695,7 @@ label{display:block;font-weight:600;margin:14px 0 6px}
 #welcome .stamp{font-size:54px;margin-bottom:10px}
 #welcome button{font-size:16px;padding:12px 26px;margin-top:14px}
 #scanStatus{margin-top:18px;min-height:20px}
+.scancard{color:var(--ink);background:var(--card);border-radius:18px;box-shadow:0 10px 40px rgba(0,0,0,.1);padding:20px 28px;margin:0 auto;max-width:380px}
 .bar{height:6px;background:var(--line);border-radius:9px;overflow:hidden;margin-top:8px}
 .bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
 
@@ -753,6 +754,27 @@ select.legmode.forced{font-weight:600}
 .leaflet-control-layers label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:500;font-size:13px}
 .leaflet-control-layers input{width:auto;margin:0}
 .leaflet-control-layers-expanded{padding:8px 12px;border-radius:12px}
+/* Filmförlopp */
+.canvaswrap{position:relative}
+#filmProg{position:absolute;inset:0;display:none;place-items:center;background:rgba(14,19,25,.55);backdrop-filter:blur(2px);border-radius:10px}
+#filmProg.on{display:grid}
+.fpcard{background:rgba(22,29,38,.94);border:1px solid #2c3744;border-radius:20px;padding:22px 30px 18px;width:min(460px,90%);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+#fpSteps{list-style:none;display:flex;justify-content:center;gap:6px;padding:0;margin:0 0 14px;flex-wrap:wrap}
+#fpSteps li{font-size:12px;color:#7d8793;display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid #2c3744}
+#fpSteps li span{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;background:#2c3744;color:#cfd5db;font-size:10px;font-weight:700}
+#fpSteps li.cur{color:#fff;border-color:#e4572e}
+#fpSteps li.cur span{background:#e4572e;color:#fff}
+#fpSteps li.done{color:#9fb5a3}
+#fpSteps li.done span{background:#3c7a4f;color:#fff}
+.fptitle{font-size:20px;color:#f3efe6}
+.fpbig{font-size:58px;font-weight:700;color:#fff;line-height:1.1;margin-top:6px;min-height:64px;display:flex;align-items:baseline;justify-content:center;gap:4px;font-variant-numeric:tabular-nums}
+.fpbig .spin{align-self:center}
+#film #filmProg .bar{width:auto;margin:16px 0 12px}
+.fpbig span{font-size:26px;color:#97a0aa;font-weight:600}
+.fpunit{color:#aab2bc;font-size:13px}
+#filmProg .bar{background:#2c3744}
+.fpsub{color:#aab2bc;font-size:12.5px;min-height:16px}
+.fpeta{color:#ffb08f;font-weight:600;margin:6px 0 12px;min-height:18px}
 /* Laddningsöverlägg */
 #loadOverlay{position:fixed;inset:0;z-index:1800;background:rgba(246,241,231,.72);backdrop-filter:blur(3px);display:none;place-items:center;padding:20px}
 #loadOverlay.on{display:grid}
@@ -950,7 +972,21 @@ button.mini{padding:4px 12px;font-size:12px}
     <div id="pickList"></div>
   </div>
   <div id="filmRec">
-    <canvas id="filmCanvas" width="1920" height="1080"></canvas>
+    <div class="canvaswrap">
+      <canvas id="filmCanvas" width="1920" height="1080"></canvas>
+      <div id="filmProg">
+        <div class="fpcard">
+          <ol id="fpSteps"></ol>
+          <div class="fptitle serif" id="fpTitle"></div>
+          <div class="fpbig serif" id="fpBig"></div>
+          <div class="fpunit" id="fpUnit"></div>
+          <div class="bar big"><i id="fpBar"></i></div>
+          <div class="fpsub" id="fpSub"></div>
+          <div class="fpeta" id="fpEta"></div>
+          <button class="ghost" id="fpCancel">Avbryt</button>
+        </div>
+      </div>
+    </div>
     <video id="filmVideo" controls style="display:none;width:min(92vw,calc((100vh - 190px)*16/9));border-radius:10px"></video>
     <div class="bar"><i id="filmBar"></i></div>
     <div class="controls" id="filmSetup">
@@ -3047,7 +3083,11 @@ $('#dirInput').addEventListener('change', async e => {
   await loadTrip();
 });
 const getFile = async en => en.file || (en.file = await en.handle.getFile());
-function status(msg, frac) {
+function status(msg, frac, n, total) {
+  if (n != null) {
+    $('#scanStatus').innerHTML = `<div class="scancard"><div class="spin"></div><div class="loadtitle serif">${esc(msg)}</div><div class="loadcount serif">${n}<span> / ${total}</span></div><div class="bar big"><i style="width:${(frac * 100).toFixed(1)}%"></i></div></div>`;
+    return;
+  }
   $('#scanStatus').innerHTML = esc(msg) + (frac != null ? `<div class="bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div>` : '');
 }
 
@@ -3085,7 +3125,7 @@ async function loadTrip() {
   const vids = S.entries.filter(e => VID_RE.test(e.name) && !SKIP_RE.test(e.name));
   if (!imgs.length) { status('Hittade inga bilder i mappen.'); return; }
   const photos = []; let done = 0;
-  status(`Läser plats och tid från ${imgs.length} bilder…`, 0);
+  status('Läser plats och tid från bilderna', 0, 0, imgs.length);
   await pool(imgs, 8, async en => {
     try {
       const file = await getFile(en);
@@ -3101,9 +3141,9 @@ async function loadTrip() {
       const ok = lat != null && lon != null && !(Math.abs(lat) < 0.001 && Math.abs(lon) < 0.001);
       photos.push({ name: en.name, path: en.path, entry: en, time, orient: (ex && +ex.Orientation) || 1, lat: ok ? lat : null, lon: ok ? lon : null });
     } catch (e) { console.warn(en.path, e); }
-    done++; if (done % 10 === 0 || done === imgs.length) status(`Läser plats och tid från ${imgs.length} bilder…`, done / imgs.length);
+    done++; if (done % 5 === 0 || done === imgs.length) status('Läser plats och tid från bilderna', done / imgs.length, done, imgs.length);
   });
-  if (vids.length) status(`Läser ${vids.length} filmklipp…`);
+  if (vids.length) status('Läser filmklippen', 1, vids.length, vids.length);
   await pool(vids, 3, async en => {
     try {
       const file = await getFile(en), v = await parseVideo(file);
@@ -4397,7 +4437,7 @@ class FilmMaker {
       for (let k = 0; k <= n; k++) for (const [z, x, y] of this.tiles.neededL(this.camAt(s, k / n))) for (let l = 0; l < this.tiles.t.length; l++) want.set(`${l}/${z}/${x}/${y}`, [l, z, x, y]);
     }
     const list = [...want.values()]; let done = 0, ok = 0;
-    await pool(list, 12, async ([l, z, x, y]) => { if (await this.tiles.load(l, z, x, y)) ok++; done++; if (done % 8 === 0) onProgress(done / list.length); });
+    await pool(list, 12, async ([l, z, x, y]) => { if (await this.tiles.load(l, z, x, y)) ok++; done++; if (done % 4 === 0 || done === list.length) onProgress(done / list.length, done, list.length); });
     return { total: list.length, ok };
   }
   // returnerar antal som inte gick att läsa
@@ -4409,7 +4449,7 @@ class FilmMaker {
         const b = sh.p.kind === 'video' ? await composeVideoPoster(sh.p, sh.start) : await composePhoto(sh.p);
         if (b) this.blobs.set(key, b); else { sessionBad.add(sh.p.path); bad++; }
       }
-      done++; onProgress(done / shots.length);
+      done++; onProgress(done / shots.length, done, shots.length);
     });
     return bad;
   }
@@ -4800,6 +4840,22 @@ async function exportFilm(mk, total, music, vcfg, acfg, onProgress) {
 
 /* ---------- filmdialog: steg 1 urval, steg 2 musik & inspelning ---------- */
 const FILM = { blob: null, ext: 'webm', running: false, ownMusic: null, stopFn: null };
+// stor förloppsruta över filmrutan medan filmen skapas
+const FP_STEPS = ['Bilder och klipp', 'Kartbilder', 'Musik', 'Filmen'];
+function fpShow(step, { big = '', of = '', unit = '', sub = '', eta = '', frac = null } = {}) {
+  const el = $('#filmProg'); el.classList.add('on');
+  $('#fpSteps').innerHTML = FP_STEPS.map((t, k) => `<li class="${k < step ? 'done' : k === step ? 'cur' : ''}"><span>${k < step ? '✓' : k + 1}</span>${t}</li>`).join('');
+  $('#fpTitle').textContent = ['Förbereder bilder och klipp', 'Hämtar kartbilder', 'Skapar musiken', 'Skapar filmen'][step];
+  $('#fpBig').innerHTML = big === '' ? '<div class="spin"></div>' : `${big}${of !== '' ? `<span> / ${of}</span>` : ''}`;
+  $('#fpUnit').textContent = unit; $('#fpSub').textContent = sub; $('#fpEta').textContent = eta;
+  $('#fpBar').style.width = frac == null ? '0' : `${(frac * 100).toFixed(1)}%`;
+  if (frac != null) $('#filmBar').style.width = `${(frac * 100).toFixed(1)}%`;
+}
+function fpHide() { $('#filmProg').classList.remove('on'); }
+function etaText(t0, f) {
+  const el = (performance.now() - t0) / 1000; if (f < 0.03 || el < 2) return 'beräknar tid kvar…';
+  const left = el / f - el; return left > 90 ? `ca ${Math.round(left / 60)} min kvar` : `ca ${Math.max(1, Math.round(left))} s kvar`;
+}
 function filmStatus(msg, frac) { $('#filmStatus').textContent = msg; if (frac != null) $('#filmBar').style.width = `${(frac * 100).toFixed(1)}%`; }
 function filmStep(n) {
   $('#filmPick').style.display = n === 1 ? '' : 'none';
@@ -4878,6 +4934,7 @@ $('#pickNext').onclick = () => {
   drawPoster(mk);
 };
 $('#filmBack').onclick = () => { filmStep(1); };
+$('#fpCancel').onclick = () => { FILM.cancel = true; };
 $('#filmRes').onchange = () => { filmCfg().res = +$('#filmRes').value; saveMeta(); $('#pickNext').onclick(); };
 async function drawPoster(mk) {
   mk.tiles.neededL(mk.seg[0].cam).forEach(([z, x, y]) => mk.tiles.t.forEach((_, l) => mk.tiles.load(l, z, x, y)));
@@ -4919,30 +4976,38 @@ $('#filmGo').onclick = async () => {
   const music = $('#filmMusic').value;
   try {
     mk.prepareTimeline();
-    filmStatus('Förbereder bilder och klipp…', 0);
-    const bad = await mk.prepareMedia(f => filmStatus('Förbereder bilder och klipp…', f));
+    $('#filmStatus').textContent = '';
+    const tm = performance.now();
+    fpShow(0, { big: 0, of: mk.fs.reduce((a, f) => a + f.shots.length, 0), unit: 'bilder och klipp', frac: 0, sub: 'Läser bilderna i full upplösning' });
+    const bad = await mk.prepareMedia((f, n, N) => fpShow(0, { big: n, of: N, unit: 'bilder och klipp', frac: f, sub: 'Läser bilderna i full upplösning', eta: etaText(tm, f) }));
+    if (FILM.cancel) throw new Error('Avbruten');
     const total = mk.prepareTimeline();           // om något inte gick att läsa
     if (!total) throw new Error('Inga bilder kunde läsas');
-    filmStatus('Hämtar kartbilder…', 0);
-    const tr = await mk.prefetchTiles(f => filmStatus('Hämtar kartbilder…', f));
-    if (tr.ok < tr.total * 0.5) filmStatus('Kartbilderna gick inte att hämta (offline?) – filmen görs ändå.');
+    const tt = performance.now();
+    fpShow(1, { big: 0, of: '…', unit: 'kartbitar', frac: 0, sub: 'Hämtas från nätet en gång per film' });
+    const tr = await mk.prefetchTiles((f, n, N) => fpShow(1, { big: n, of: N, unit: 'kartbitar', frac: f, sub: 'Hämtas från nätet en gång per film', eta: etaText(tt, f) }));
+    if (FILM.cancel) throw new Error('Avbruten');
+    const tileWarn = tr.ok < tr.total * 0.5 ? 'Kartbilderna gick inte att hämta (offline?) – filmen görs ändå. ' : '';
     const vcfg = await pickVideoConfig(), acfg = await pickAudioConfig();
     if (vcfg && window.Mp4Muxer) {
       // bild för bild – fungerar även om fönstret är dolt
-      if (music !== 'none') filmStatus('Skapar musiken…', 0);
-      const t0 = performance.now();
+      fpShow(2, { sub: music === 'none' ? 'Ingen musik vald' : music === 'own' ? 'Läser in din ljudfil' : 'Komponeras för just den här resan' });
+      let t0 = 0;
       FILM.blob = await exportFilm(mk, total, music, vcfg, acfg, (f, i, n) => {
-        const el = (performance.now() - t0) / 1000, left = f > 0.02 ? el / f - el : null;
-        filmStatus(`Skapar filmen… ${Math.round(f * 100)} %  (bild ${i} av ${n}${left != null ? `, ca ${left > 90 ? Math.round(left / 60) + ' min' : Math.round(left) + ' s'} kvar` : ''}) – du kan använda datorn under tiden`, f);
+        if (!t0) t0 = performance.now();
+        fpShow(3, { big: Math.round(f * 100) + '<span>%</span>', unit: `bild ${i} av ${n}`, frac: f, eta: etaText(t0, f), sub: tileWarn + 'Du kan använda datorn under tiden.' });
       });
+      fpHide();
       FILM.ext = 'mp4'; mk.cleanup();
       filmFinished(total, bad);
       return;
     }
     // reserv: realtidsinspelning (äldre webbläsare)
+    fpHide();
     await recordRealtime(mk, total, music, bad);
   } catch (e) {
     console.error(e);
+    fpHide();
     if (FILM.cancel) filmStatus('Avbruten.'); else filmStatus(`Något gick fel: ${e.message}`);
     $('#filmSetup').style.display = ''; mk.cleanup();
   } finally { FILM.running = false; }

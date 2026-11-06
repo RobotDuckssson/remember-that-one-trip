@@ -330,7 +330,7 @@ class FilmMaker {
       for (let k = 0; k <= n; k++) for (const [z, x, y] of this.tiles.neededL(this.camAt(s, k / n))) for (let l = 0; l < this.tiles.t.length; l++) want.set(`${l}/${z}/${x}/${y}`, [l, z, x, y]);
     }
     const list = [...want.values()]; let done = 0, ok = 0;
-    await pool(list, 12, async ([l, z, x, y]) => { if (await this.tiles.load(l, z, x, y)) ok++; done++; if (done % 8 === 0) onProgress(done / list.length); });
+    await pool(list, 12, async ([l, z, x, y]) => { if (await this.tiles.load(l, z, x, y)) ok++; done++; if (done % 4 === 0 || done === list.length) onProgress(done / list.length, done, list.length); });
     return { total: list.length, ok };
   }
   // returnerar antal som inte gick att läsa
@@ -342,7 +342,7 @@ class FilmMaker {
         const b = sh.p.kind === 'video' ? await composeVideoPoster(sh.p, sh.start) : await composePhoto(sh.p);
         if (b) this.blobs.set(key, b); else { sessionBad.add(sh.p.path); bad++; }
       }
-      done++; onProgress(done / shots.length);
+      done++; onProgress(done / shots.length, done, shots.length);
     });
     return bad;
   }
@@ -733,6 +733,22 @@ async function exportFilm(mk, total, music, vcfg, acfg, onProgress) {
 
 /* ---------- filmdialog: steg 1 urval, steg 2 musik & inspelning ---------- */
 const FILM = { blob: null, ext: 'webm', running: false, ownMusic: null, stopFn: null };
+// stor förloppsruta över filmrutan medan filmen skapas
+const FP_STEPS = ['Bilder och klipp', 'Kartbilder', 'Musik', 'Filmen'];
+function fpShow(step, { big = '', of = '', unit = '', sub = '', eta = '', frac = null } = {}) {
+  const el = $('#filmProg'); el.classList.add('on');
+  $('#fpSteps').innerHTML = FP_STEPS.map((t, k) => `<li class="${k < step ? 'done' : k === step ? 'cur' : ''}"><span>${k < step ? '✓' : k + 1}</span>${t}</li>`).join('');
+  $('#fpTitle').textContent = ['Förbereder bilder och klipp', 'Hämtar kartbilder', 'Skapar musiken', 'Skapar filmen'][step];
+  $('#fpBig').innerHTML = big === '' ? '<div class="spin"></div>' : `${big}${of !== '' ? `<span> / ${of}</span>` : ''}`;
+  $('#fpUnit').textContent = unit; $('#fpSub').textContent = sub; $('#fpEta').textContent = eta;
+  $('#fpBar').style.width = frac == null ? '0' : `${(frac * 100).toFixed(1)}%`;
+  if (frac != null) $('#filmBar').style.width = `${(frac * 100).toFixed(1)}%`;
+}
+function fpHide() { $('#filmProg').classList.remove('on'); }
+function etaText(t0, f) {
+  const el = (performance.now() - t0) / 1000; if (f < 0.03 || el < 2) return 'beräknar tid kvar…';
+  const left = el / f - el; return left > 90 ? `ca ${Math.round(left / 60)} min kvar` : `ca ${Math.max(1, Math.round(left))} s kvar`;
+}
 function filmStatus(msg, frac) { $('#filmStatus').textContent = msg; if (frac != null) $('#filmBar').style.width = `${(frac * 100).toFixed(1)}%`; }
 function filmStep(n) {
   $('#filmPick').style.display = n === 1 ? '' : 'none';
@@ -811,6 +827,7 @@ $('#pickNext').onclick = () => {
   drawPoster(mk);
 };
 $('#filmBack').onclick = () => { filmStep(1); };
+$('#fpCancel').onclick = () => { FILM.cancel = true; };
 $('#filmRes').onchange = () => { filmCfg().res = +$('#filmRes').value; saveMeta(); $('#pickNext').onclick(); };
 async function drawPoster(mk) {
   mk.tiles.neededL(mk.seg[0].cam).forEach(([z, x, y]) => mk.tiles.t.forEach((_, l) => mk.tiles.load(l, z, x, y)));
@@ -852,30 +869,38 @@ $('#filmGo').onclick = async () => {
   const music = $('#filmMusic').value;
   try {
     mk.prepareTimeline();
-    filmStatus('Förbereder bilder och klipp…', 0);
-    const bad = await mk.prepareMedia(f => filmStatus('Förbereder bilder och klipp…', f));
+    $('#filmStatus').textContent = '';
+    const tm = performance.now();
+    fpShow(0, { big: 0, of: mk.fs.reduce((a, f) => a + f.shots.length, 0), unit: 'bilder och klipp', frac: 0, sub: 'Läser bilderna i full upplösning' });
+    const bad = await mk.prepareMedia((f, n, N) => fpShow(0, { big: n, of: N, unit: 'bilder och klipp', frac: f, sub: 'Läser bilderna i full upplösning', eta: etaText(tm, f) }));
+    if (FILM.cancel) throw new Error('Avbruten');
     const total = mk.prepareTimeline();           // om något inte gick att läsa
     if (!total) throw new Error('Inga bilder kunde läsas');
-    filmStatus('Hämtar kartbilder…', 0);
-    const tr = await mk.prefetchTiles(f => filmStatus('Hämtar kartbilder…', f));
-    if (tr.ok < tr.total * 0.5) filmStatus('Kartbilderna gick inte att hämta (offline?) – filmen görs ändå.');
+    const tt = performance.now();
+    fpShow(1, { big: 0, of: '…', unit: 'kartbitar', frac: 0, sub: 'Hämtas från nätet en gång per film' });
+    const tr = await mk.prefetchTiles((f, n, N) => fpShow(1, { big: n, of: N, unit: 'kartbitar', frac: f, sub: 'Hämtas från nätet en gång per film', eta: etaText(tt, f) }));
+    if (FILM.cancel) throw new Error('Avbruten');
+    const tileWarn = tr.ok < tr.total * 0.5 ? 'Kartbilderna gick inte att hämta (offline?) – filmen görs ändå. ' : '';
     const vcfg = await pickVideoConfig(), acfg = await pickAudioConfig();
     if (vcfg && window.Mp4Muxer) {
       // bild för bild – fungerar även om fönstret är dolt
-      if (music !== 'none') filmStatus('Skapar musiken…', 0);
-      const t0 = performance.now();
+      fpShow(2, { sub: music === 'none' ? 'Ingen musik vald' : music === 'own' ? 'Läser in din ljudfil' : 'Komponeras för just den här resan' });
+      let t0 = 0;
       FILM.blob = await exportFilm(mk, total, music, vcfg, acfg, (f, i, n) => {
-        const el = (performance.now() - t0) / 1000, left = f > 0.02 ? el / f - el : null;
-        filmStatus(`Skapar filmen… ${Math.round(f * 100)} %  (bild ${i} av ${n}${left != null ? `, ca ${left > 90 ? Math.round(left / 60) + ' min' : Math.round(left) + ' s'} kvar` : ''}) – du kan använda datorn under tiden`, f);
+        if (!t0) t0 = performance.now();
+        fpShow(3, { big: Math.round(f * 100) + '<span>%</span>', unit: `bild ${i} av ${n}`, frac: f, eta: etaText(t0, f), sub: tileWarn + 'Du kan använda datorn under tiden.' });
       });
+      fpHide();
       FILM.ext = 'mp4'; mk.cleanup();
       filmFinished(total, bad);
       return;
     }
     // reserv: realtidsinspelning (äldre webbläsare)
+    fpHide();
     await recordRealtime(mk, total, music, bad);
   } catch (e) {
     console.error(e);
+    fpHide();
     if (FILM.cancel) filmStatus('Avbruten.'); else filmStatus(`Något gick fel: ${e.message}`);
     $('#filmSetup').style.display = ''; mk.cleanup();
   } finally { FILM.running = false; }

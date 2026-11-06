@@ -151,7 +151,11 @@ $('#dirInput').addEventListener('change', async e => {
   await loadTrip();
 });
 const getFile = async en => en.file || (en.file = await en.handle.getFile());
-function status(msg, frac) {
+function status(msg, frac, n, total) {
+  if (n != null) {
+    $('#scanStatus').innerHTML = `<div class="scancard"><div class="spin"></div><div class="loadtitle serif">${esc(msg)}</div><div class="loadcount serif">${n}<span> / ${total}</span></div><div class="bar big"><i style="width:${(frac * 100).toFixed(1)}%"></i></div></div>`;
+    return;
+  }
   $('#scanStatus').innerHTML = esc(msg) + (frac != null ? `<div class="bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div>` : '');
 }
 
@@ -189,7 +193,7 @@ async function loadTrip() {
   const vids = S.entries.filter(e => VID_RE.test(e.name) && !SKIP_RE.test(e.name));
   if (!imgs.length) { status('Hittade inga bilder i mappen.'); return; }
   const photos = []; let done = 0;
-  status(`Läser plats och tid från ${imgs.length} bilder…`, 0);
+  status('Läser plats och tid från bilderna', 0, 0, imgs.length);
   await pool(imgs, 8, async en => {
     try {
       const file = await getFile(en);
@@ -205,9 +209,9 @@ async function loadTrip() {
       const ok = lat != null && lon != null && !(Math.abs(lat) < 0.001 && Math.abs(lon) < 0.001);
       photos.push({ name: en.name, path: en.path, entry: en, time, orient: (ex && +ex.Orientation) || 1, lat: ok ? lat : null, lon: ok ? lon : null });
     } catch (e) { console.warn(en.path, e); }
-    done++; if (done % 10 === 0 || done === imgs.length) status(`Läser plats och tid från ${imgs.length} bilder…`, done / imgs.length);
+    done++; if (done % 5 === 0 || done === imgs.length) status('Läser plats och tid från bilderna', done / imgs.length, done, imgs.length);
   });
-  if (vids.length) status(`Läser ${vids.length} filmklipp…`);
+  if (vids.length) status('Läser filmklippen', 1, vids.length, vids.length);
   await pool(vids, 3, async en => {
     try {
       const file = await getFile(en), v = await parseVideo(file);
