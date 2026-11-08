@@ -25,9 +25,23 @@ label{display:block;font-weight:600;margin:14px 0 6px}
 .small{font-size:12px}
 
 /* Welcome */
-#welcome{height:100%;display:grid;place-items:center;padding:24px;
+#welcome{min-height:100%;height:100%;overflow:auto;display:flex;flex-direction:column;padding:24px;
   background:radial-gradient(1200px 600px at 70% 20%,#fff8ea 0,transparent 60%),var(--paper)}
+#welcome .hero{flex:1;display:grid;place-items:center;padding:20px 0 10px}
 #welcome .box{max-width:560px;text-align:center}
+.mobilewarn{display:none;text-align:left;background:#fff4ec;border:2px solid var(--accent);border-radius:14px;padding:12px 16px;margin:16px 0 4px;line-height:1.45;font-size:14.5px;color:var(--ink)}
+.mobilewarn b{display:block;margin-bottom:4px;font-size:15.5px}
+.mobilewarn.on{display:block}
+.guide{max-width:1180px;width:100%;margin:10px auto 0}
+.guidehead{text-align:center;font-size:20px;margin-bottom:14px}
+.steps{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.step{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px 16px 18px;box-shadow:0 4px 18px rgba(31,42,54,.05)}
+.step .ill{width:100%;height:auto;display:block;border-radius:12px}
+.stepnum{position:absolute;top:-12px;left:-10px;width:34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;font:700 16px Georgia,serif;display:grid;place-items:center;box-shadow:0 2px 8px rgba(228,87,46,.35);border:3px solid var(--paper)}
+.step h3{margin:12px 0 4px;font-size:18px}
+.step p{margin:0;font-size:13.5px;line-height:1.5;color:#4a5562}
+@media (max-width:980px){.steps{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:560px){.steps{grid-template-columns:1fr}#welcome h1{font-size:36px}}
 #welcome h1{font-size:46px;margin:0 0 8px;line-height:1.05}
 #welcome p{font-size:16px;line-height:1.55;color:#3c4652}
 #welcome .stamp{font-size:54px;margin-bottom:10px}
@@ -217,14 +231,96 @@ button.mini{padding:4px 12px;font-size:12px}
 <body>
 
 <section id="welcome">
-  <div class="box">
-    <div class="stamp">🧭</div>
-    <h1>Remember That One Trip</h1>
-    <p>Peka på en mapp med bilder från en resa. Appen läser var och när varje bild togs, ritar upp hur ni rörde er och gör en liten film med resemusik.</p>
-    <button id="pickBtn" class="accent">Välj resmapp…</button>
-    <input type="file" id="dirInput" webkitdirectory multiple hidden>
-    <div id="scanStatus" class="muted"></div>
-    <p class="small muted" style="margin-top:28px">Fungerar i Chrome och Edge. Bilderna laddas aldrig upp. Kartbilder, ortnamn och vägar hämtas från gratistjänster på nätet – då skickas stoppens koordinater, inte bilderna.</p>
+  <div class="hero">
+    <div class="box">
+      <div class="stamp">🧭</div>
+      <h1>Remember That One Trip</h1>
+      <p>Peka på en mapp med bilder från en resa. Appen läser var och när varje bild togs, ritar upp hur ni rörde er och gör en liten film med resemusik.</p>
+      <div class="mobilewarn" id="mobileWarn">
+        <b>📱 Fungerar inte i mobilen</b>
+        När man väljer bilder i mobilens webbläsare tar telefonen bort platsdatan ur fotona – och utan den kan appen inte rita upp resan. Öppna sidan på en dator med Chrome eller Edge.
+      </div>
+      <button id="pickBtn" class="accent">Välj resmapp…</button>
+      <input type="file" id="dirInput" webkitdirectory multiple hidden>
+      <div id="scanStatus" class="muted"></div>
+      <p class="small muted" style="margin-top:22px">Fungerar på dator i Chrome och Edge – inte i mobilen, där tas platsdatan bort ur bilderna. Bilderna laddas aldrig upp. Kartbilder, ortnamn och vägar hämtas från gratistjänster på nätet – då skickas stoppens koordinater, inte bilderna.</p>
+    </div>
+  </div>
+
+  <div class="guide">
+    <div class="guidehead serif">Så funkar det – i fyra steg</div>
+    <ol class="steps">
+      <li class="step">
+        <svg viewBox="0 0 220 130" class="ill" aria-hidden="true">
+          <rect x="0" y="0" width="220" height="130" rx="14" fill="#f3ede1"/>
+          <rect x="44" y="40" width="34" height="26" rx="4" fill="#cfe3f1" transform="rotate(-10 61 53)"/>
+          <rect x="92" y="30" width="38" height="30" rx="4" fill="#f6d2a8" transform="rotate(6 111 45)"/>
+          <rect x="136" y="38" width="34" height="26" rx="4" fill="#cfe6c9" transform="rotate(12 153 51)"/>
+          <path d="M34 56h52l10 10h90v46a6 6 0 0 1-6 6H40a6 6 0 0 1-6-6z" fill="#e4572e"/>
+          <path d="M34 72h152v40a6 6 0 0 1-6 6H40a6 6 0 0 1-6-6z" fill="#ef7a52"/>
+          <circle cx="160" cy="34" r="13" fill="#fff" stroke="#1f2a36" stroke-width="2"/>
+          <path d="M160 26a6 6 0 0 1 6 6c0 5-6 10-6 10s-6-5-6-10a6 6 0 0 1 6-6z" fill="#1f2a36"/>
+          <circle cx="160" cy="32" r="2.2" fill="#fff"/>
+          <path d="M120 96l0 22 6-6 5 10 4-2-5-10 8 0z" fill="#fff" stroke="#1f2a36" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <div class="stepnum">1</div>
+        <h3>Välj mapp</h3>
+        <p>Välj en mapp på datorn med bilderna från en resa. Appen läser var och när varje bild togs.</p>
+      </li>
+      <li class="step">
+        <svg viewBox="0 0 220 130" class="ill" aria-hidden="true">
+          <rect x="0" y="0" width="220" height="130" rx="14" fill="#e6efe9"/>
+          <path d="M0 92 C40 80 60 104 100 96 S170 70 220 84 V130 H0z" fill="#cfe3f1"/>
+          <path d="M26 30 C60 26 70 60 104 58 S150 34 176 52" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+          <path d="M26 30 C60 26 70 60 104 58 S150 34 176 52" fill="none" stroke="#e4572e" stroke-width="4" stroke-linecap="round"/>
+          <path d="M176 52 C190 62 186 86 168 100" fill="none" stroke="#1d7fbf" stroke-width="4" stroke-dasharray="5 6"/>
+          <circle cx="26" cy="30" r="9" fill="#1f2a36" stroke="#fff" stroke-width="3"/><text x="26" y="34" font-size="10" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">1</text>
+          <circle cx="104" cy="58" r="9" fill="#1f2a36" stroke="#fff" stroke-width="3"/><text x="104" y="62" font-size="10" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">2</text>
+          <circle cx="168" cy="100" r="9" fill="#e4572e" stroke="#fff" stroke-width="3"/><text x="168" y="104" font-size="10" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">3</text>
+          <circle cx="62" cy="40" r="8" fill="#fff" stroke="#1f2a36" stroke-width="2" stroke-dasharray="3 2"/><text x="62" y="44" font-size="11" font-weight="700" text-anchor="middle" fill="#1f2a36" font-family="system-ui,sans-serif">+</text>
+          <rect x="10" y="98" width="62" height="22" rx="11" fill="#fff"/><text x="41" y="113" font-size="11" text-anchor="middle" font-family="system-ui,sans-serif" fill="#1f2a36">🚗 → 🚆</text>
+          <rect x="150" y="10" width="60" height="22" rx="11" fill="#fff"/>
+          <circle cx="164" cy="21" r="5" fill="#efe2c6"/><circle cx="178" cy="21" r="5" fill="#24272b"/><circle cx="192" cy="21" r="5" fill="#a9c6de"/>
+        </svg>
+        <div class="stepnum">2</div>
+        <h3>Se över resan</h3>
+        <p>Kolla stoppen på kartan. Lägg till punkter ni passerat, rätta färdsätt – bil, tåg, färja, flyg – och välj kartstil.</p>
+      </li>
+      <li class="step">
+        <svg viewBox="0 0 220 130" class="ill" aria-hidden="true">
+          <rect x="0" y="0" width="220" height="130" rx="14" fill="#f1ece4"/>
+          <g>
+            <rect x="22" y="16" width="52" height="44" rx="7" fill="#f6d2a8" stroke="#e4572e" stroke-width="3"/>
+            <rect x="84" y="16" width="52" height="44" rx="7" fill="#cfe3f1" opacity=".55"/>
+            <rect x="146" y="16" width="52" height="44" rx="7" fill="#cfe6c9" stroke="#e4572e" stroke-width="3"/>
+            <rect x="22" y="70" width="52" height="44" rx="7" fill="#e3d4f0" opacity=".55"/>
+            <rect x="84" y="70" width="52" height="44" rx="7" fill="#f3c9c0" stroke="#e4572e" stroke-width="3"/>
+            <rect x="146" y="70" width="52" height="44" rx="7" fill="#d9d4c8" opacity=".55"/>
+            <path d="M100 86l0 14 12-7z" fill="#fff"/>
+            <circle cx="30" cy="24" r="8" fill="#e4572e"/><text x="30" y="28" font-size="10" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">1</text>
+            <circle cx="154" cy="24" r="8" fill="#e4572e"/><text x="154" y="28" font-size="10" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">2</text>
+            <circle cx="92" cy="78" r="8" fill="#e4572e"/><text x="92" y="82" font-size="10" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">3</text>
+          </g>
+        </svg>
+        <div class="stepnum">3</div>
+        <h3>Välj bilder</h3>
+        <p>Klicka i vilka bilder och filmklipp som ska vara med från varje stopp – eller låt appen välja åt dig.</p>
+      </li>
+      <li class="step">
+        <svg viewBox="0 0 220 130" class="ill" aria-hidden="true">
+          <rect x="0" y="0" width="220" height="130" rx="14" fill="#1f2a36"/>
+          <rect x="30" y="18" width="160" height="80" rx="8" fill="#2e3b4a"/>
+          <g fill="#1f2a36"><rect x="36" y="22" width="10" height="6" rx="1"/><rect x="56" y="22" width="10" height="6" rx="1"/><rect x="76" y="22" width="10" height="6" rx="1"/><rect x="96" y="22" width="10" height="6" rx="1"/><rect x="116" y="22" width="10" height="6" rx="1"/><rect x="136" y="22" width="10" height="6" rx="1"/><rect x="156" y="22" width="10" height="6" rx="1"/><rect x="176" y="22" width="10" height="6" rx="1"/>
+          <rect x="36" y="88" width="10" height="6" rx="1"/><rect x="56" y="88" width="10" height="6" rx="1"/><rect x="76" y="88" width="10" height="6" rx="1"/><rect x="96" y="88" width="10" height="6" rx="1"/><rect x="116" y="88" width="10" height="6" rx="1"/><rect x="136" y="88" width="10" height="6" rx="1"/><rect x="156" y="88" width="10" height="6" rx="1"/><rect x="176" y="88" width="10" height="6" rx="1"/></g>
+          <circle cx="110" cy="58" r="17" fill="#e4572e"/><path d="M104 49l0 18 15-9z" fill="#fff"/>
+          <text x="40" y="66" font-size="18" fill="#ffb08f" font-family="Georgia,serif">♪</text><text x="164" y="58" font-size="22" fill="#ffb08f" font-family="Georgia,serif">♫</text>
+          <rect x="30" y="110" width="160" height="6" rx="3" fill="#2e3b4a"/><rect x="30" y="110" width="104" height="6" rx="3" fill="#e4572e"/>
+        </svg>
+        <div class="stepnum">4</div>
+        <h3>Musik och film</h3>
+        <p>Välj musik och skapa filmen. Den sparas direkt i resmappen, klar att visa för den som frågar.</p>
+      </li>
+    </ol>
   </div>
 </section>
 

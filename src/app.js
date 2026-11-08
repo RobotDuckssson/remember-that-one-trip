@@ -858,6 +858,12 @@ function focusStop(i) {
 $('#fitBtn').onclick = () => fitAll();
 $('#newBtn').onclick = () => location.reload();
 $('#pickBtn').onclick = pickFolder;
+// mobil: telefonen tar bort platsdatan ur bilder som väljs i webbläsaren – säg det tydligt
+(() => {
+  const ua = navigator.userAgent || '';
+  const mobile = (navigator.userAgentData && navigator.userAgentData.mobile) || /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  if (mobile) $('#mobileWarn').classList.add('on');
+})();
 $('#editBtn').onclick = () => openSetup(false);
 
 /* ---------- egna punkter mellan platser ---------- */

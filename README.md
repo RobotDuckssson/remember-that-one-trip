@@ -36,6 +36,7 @@ Then:
 
 | | |
 |---|---|
+| **Device** | A desktop or laptop computer. **Phones are not supported:** when photos are picked in a mobile browser, iOS and Android remove the GPS location from the files, so the trip cannot be drawn. |
 | **Browser** | Chrome or Edge on a desktop/laptop. They can read *and write* to a folder (File System Access API) and encode video (WebCodecs). Firefox and Safari can read the photos, but cannot save the trip file or the film into the folder (the film can still be downloaded); without WebCodecs the film is recorded in real time instead, and the window must stay visible. |
 | **Photos** | Taken with location turned on (default on most phones). |
 | **Internet** | For map tiles, place names and routes. Your photos are never uploaded. |
